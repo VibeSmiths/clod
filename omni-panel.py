@@ -326,8 +326,8 @@ class ActivityBar(Static):
       ✓ Done  (8s)          ← fades after 3 s
     """
 
-    def __init__(self) -> None:
-        super().__init__("")
+    def __init__(self, **kwargs) -> None:
+        super().__init__("", **kwargs)
         self._start:   float = 0.0   # wall time when user sent message
         self._action:  str   = ""    # most recent tool/action text
         self._active:  bool  = False # True while AI is working
