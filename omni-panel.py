@@ -259,20 +259,39 @@ class ComfyRow(Static):
         ))
 
 
-class SidebarBtn(Static):
-    """Clickable sidebar action item. Uses on_mount/update pattern (reliable in Textual 8)."""
+class ModeModelBar(Static):
+    """Shows the currently active mode and model in plain English."""
 
-    def __init__(self, icon: str, label: str, action_id: str) -> None:
+    def on_mount(self) -> None:
+        self.update_state("Ask Me First", "Best Quality (32b)")
+
+    def update_state(self, mode_label: str, model_label: str) -> None:
+        self.update(Text.assemble(
+            (" Mode  ", "dim"),
+            (mode_label,  "bold bright_cyan"),
+            ("\n Model ", "dim"),
+            (model_label, "bold bright_cyan"),
+        ))
+
+
+class SidebarBtn(Static):
+    """Clickable sidebar action item. Optional desc shows on line 2."""
+
+    def __init__(self, icon: str, label: str, action_id: str, desc: str = "") -> None:
         super().__init__()
         self._icon      = icon
         self._label     = label
         self._action_id = action_id
+        self._desc      = desc
 
     def on_mount(self) -> None:
-        self.update(Text.assemble(
+        parts: list[tuple[str, str]] = [
             (f" {self._icon} ", "cyan"),
             (self._label, "white"),
-        ))
+        ]
+        if self._desc:
+            parts += [("\n    ", ""), (self._desc, "dim #4a7070")]
+        self.update(Text.assemble(*parts))
 
     def on_click(self) -> None:
         self.app.sidebar_action(self._action_id)  # type: ignore
@@ -376,6 +395,12 @@ class OmniPanel(App):
 
     GPUBar { height: 2; padding: 1 0 0 0; }
     RamBar { height: 2; padding: 0 0 0 0; }
+    ModeModelBar {
+        height: 4;
+        padding: 1 0 0 0;
+        border-bottom: solid #1e3e3e;
+        margin-bottom: 0;
+    }
 
     ServiceRow { height: 1; }
     OllamaRow  { height: 1; }
@@ -428,6 +453,9 @@ class OmniPanel(App):
         # Copy-response tracking
         self._last_ai_lines: list[str] = []   # lines of most recent AI reply
         self._in_ai_reply:   bool = False     # currently inside an ai › block
+        # Plain-English state labels shown in ModeModelBar
+        self._mode_label:    str = "Ask Me First"
+        self._model_label:   str = "Best Quality (32b)"
 
     # ── Layout ─────────────────────────────────────────────────────────────────
 
@@ -437,49 +465,78 @@ class OmniPanel(App):
             with Vertical(id="sidebar"):
                 yield GPUBar()
                 yield RamBar()
-                yield Label("  Status", classes="sec")
+                yield ModeModelBar()
+
+                # ── Think Style (model) ─────────────────────────────────────
+                yield Label("  Think Style", classes="sec")
+                yield SidebarBtn("■", "Best Quality",  "model_32b",
+                                 "smartest, a bit slower")
+                yield SidebarBtn("▸", "Balanced",      "model_14b",
+                                 "fast and capable")
+                yield SidebarBtn("◐", "Deep Thinker",  "model_reason",
+                                 "hard problems, step-by-step")
+                yield SidebarBtn("◌", "Casual Chat",   "model_chat",
+                                 "quick back-and-forth")
+                yield SidebarBtn("◎", "See Images",    "model_vision",
+                                 "show it a picture")
+
+                # ── Caution Level (mode) ────────────────────────────────────
+                yield Label("  Caution Level", classes="sec")
+                yield SidebarBtn("◉", "Ask Me First",  "mode_safe",
+                                 "confirms before big changes")
+                yield SidebarBtn("⚡", "Just Do It",    "mode_auto",
+                                 "no confirmations, full speed")
+                yield SidebarBtn("⚠", "Ask Everything","mode_paranoid",
+                                 "maximum caution, ask always")
+
+                # ── Self-Build (evolve) ─────────────────────────────────────
+                yield Label("  Self-Build", classes="sec")
+                yield SidebarBtn("▶", "Improve Itself","evolve_start",
+                                 "start autonomous improvement")
+                yield SidebarBtn("■", "Stop Improving","evolve_stop",
+                                 "pause the improve loop")
+                yield SidebarBtn("ℹ", "Progress Report","evolve_status",
+                                 "see what it's been doing")
+
+                # ── Quick Actions ───────────────────────────────────────────
+                yield Label("  Quick Actions", classes="sec")
+                yield SidebarBtn("✓", "Test OmniAI",   "task_selftest",
+                                 "check everything works")
+                yield SidebarBtn("⊞", "What's Running","task_sysinfo",
+                                 "GPU, services, disk")
+                yield SidebarBtn("◼", "Save Chat",     "task_save",
+                                 "save this session to disk")
+                yield SidebarBtn("✕", "Clear Chat",    "task_clear",
+                                 "start fresh, wipe history")
+                yield SidebarBtn("⎘", "Copy Reply",    "copy_response",
+                                 "copy last AI answer")
+                yield SidebarBtn("↺", "Restart Agent", "restart_omni",
+                                 "reboot OmniAI process")
+
+                # ── Services ────────────────────────────────────────────────
+                yield Label("  Services", classes="sec")
                 for name, label in SERVICES:
                     yield ServiceRow(name, label)
                 yield OllamaRow()
                 yield ComfyRow()
 
-                yield Label("  Docker", classes="sec")
-                yield SidebarBtn("▶", "Start Stack",   "docker_start")
-                yield SidebarBtn("■", "Stop Stack",    "docker_stop")
+                # ── Docker Stack ────────────────────────────────────────────
+                yield Label("  Docker Stack", classes="sec")
+                yield SidebarBtn("▶", "Start Services","docker_start",
+                                 "bring all containers up")
+                yield SidebarBtn("■", "Stop Services", "docker_stop",
+                                 "shut down all containers")
 
-                yield Label("  Open", classes="sec")
-                yield SidebarBtn("⚙", "WebUI",         "open_webui")
-                yield SidebarBtn("⚙", "Perplexica",    "open_search")
-                yield SidebarBtn("⚙", "ComfyUI",       "open_comfy")
-                yield SidebarBtn("⚙", "n8n",           "open_n8n")
-
-                yield Label("  Agent", classes="sec")
-                yield SidebarBtn("↺", "Restart Agent", "restart_omni")
-                yield SidebarBtn("↺", "Refresh",       "refresh_all")
-                yield SidebarBtn("⎘", "Copy Reply",    "copy_response")
-
-                yield Label("  Mode", classes="sec")
-                yield SidebarBtn("◉", "Safe Mode",     "mode_safe")
-                yield SidebarBtn("⚡", "Auto Mode",     "mode_auto")
-                yield SidebarBtn("⚠", "Paranoid",      "mode_paranoid")
-
-                yield Label("  Model", classes="sec")
-                yield SidebarBtn("■", "32b Coder",     "model_32b")
-                yield SidebarBtn("▸", "14b Fast",      "model_14b")
-                yield SidebarBtn("◐", "DeepSeek R1",   "model_reason")
-                yield SidebarBtn("◌", "Chat 8b",       "model_chat")
-                yield SidebarBtn("◎", "Vision 7b",     "model_vision")
-
-                yield Label("  Evolve", classes="sec")
-                yield SidebarBtn("▶", "Start Evolve",  "evolve_start")
-                yield SidebarBtn("■", "Stop Evolve",   "evolve_stop")
-                yield SidebarBtn("ℹ", "Evolve Status", "evolve_status")
-
-                yield Label("  Quick", classes="sec")
-                yield SidebarBtn("✓", "Self-Test",     "task_selftest")
-                yield SidebarBtn("⊞", "System Info",   "task_sysinfo")
-                yield SidebarBtn("◼", "Save Session",  "task_save")
-                yield SidebarBtn("✕", "Clear History", "task_clear")
+                # ── Launch App ──────────────────────────────────────────────
+                yield Label("  Launch App", classes="sec")
+                yield SidebarBtn("⚙", "Chat UI",       "open_webui",
+                                 "browser chat for any model")
+                yield SidebarBtn("⚙", "AI Web Search", "open_search",
+                                 "AI-powered Perplexica")
+                yield SidebarBtn("⚙", "Image Creator", "open_comfy",
+                                 "ComfyUI / Stable Diffusion")
+                yield SidebarBtn("⚙", "Automation",    "open_n8n",
+                                 "n8n workflow builder")
 
             with Vertical(id="main"):
                 yield RichLog(id="chat_log", auto_scroll=True,
@@ -533,15 +590,39 @@ class OmniPanel(App):
             "task_clear":     lambda: self._write("/clear"),
         }.get(action_id, lambda: None)()
 
+    # Plain-English label maps
+    _MODE_LABELS = {
+        "cautious": "Ask Me First",
+        "auto":     "Just Do It",
+        "paranoid": "Ask Everything",
+    }
+    _MODEL_LABELS = {
+        "qwen2.5-coder:32b-instruct-q4_K_M": "Best Quality (32b)",
+        "qwen2.5-coder:14b":                 "Balanced (14b)",
+        "deepseek-r1:14b":                   "Deep Thinker (R1)",
+        "llama3.1:8b":                       "Casual Chat (8b)",
+        "qwen2.5vl:7b":                      "See Images (7b)",
+    }
+
     def _set_mode(self, mode: str) -> None:
+        self._mode_label = self._MODE_LABELS.get(mode, mode)
         self._write(f"/mode {mode}")
-        self._sys(f"[Mode → {mode}]")
+        self._sys(f"[Mode → {self._mode_label}]")
+        self._refresh_state_bar()
 
     def _set_model(self, model_name: str) -> None:
+        self._model_label = self._MODEL_LABELS.get(model_name, model_name)
         self._write(f"/model {model_name}")
-        self._sys(f"[Model → {model_name}]")
+        self._sys(f"[Model → {self._model_label}]")
         try:
             self.query_one("#status_bar", StatusBar).model_name = model_name
+        except Exception:
+            pass
+        self._refresh_state_bar()
+
+    def _refresh_state_bar(self) -> None:
+        try:
+            self.query_one(ModeModelBar).update_state(self._mode_label, self._model_label)
         except Exception:
             pass
 
