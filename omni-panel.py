@@ -37,7 +37,7 @@ OLLAMA_URL  = "http://localhost:11434"
 COMFYUI_URL = "http://localhost:8188"
 
 SERVICES = [
-    ("open-webui",          "Chat UI"),
+    ("omni-pipelines",      "Pipelines"),
     ("perplexica-frontend", "Web Search"),
     ("searxng",             "SearXNG"),
     ("n8n",                 "n8n"),
@@ -614,8 +614,8 @@ class OmniPanel(App):
 
                 # ── Launch App ──────────────────────────────────────────────
                 yield Label("  Launch App", classes="sec")
-                yield SidebarBtn("⚙", "Chat UI",       "open_webui",
-                                 "browser chat for any model")
+                yield SidebarBtn("⚙", "Pipelines",     "open_pipelines",
+                                 "Claude review API (port 9099)")
                 yield SidebarBtn("⚙", "AI Web Search", "open_search",
                                  "AI-powered Perplexica")
                 yield SidebarBtn("⚙", "Image Creator", "open_comfy",
@@ -649,7 +649,7 @@ class OmniPanel(App):
             "docker_start":   self._docker_start,
             "docker_stop":    self._docker_stop,
             # Open browser
-            "open_webui":     lambda: subprocess.Popen(["xdg-open", "http://localhost:3002"]),
+            "open_pipelines": lambda: subprocess.Popen(["xdg-open", "http://localhost:9099"]),
             "open_search":    lambda: subprocess.Popen(["xdg-open", "http://localhost:3000"]),
             "open_comfy":     lambda: subprocess.Popen(["xdg-open", COMFYUI_URL]),
             "open_n8n":       lambda: subprocess.Popen(["xdg-open", "http://localhost:5678"]),

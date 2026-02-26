@@ -1,0 +1,10 @@
+{
+  "super_provider": {
+    "name": "HybridAgent",
+    "endpoints": [
+      "https://api.claude.com",
+      "https://api.gemini.com",
+      "https://api.openai.com"
+    ]
+  }
+}

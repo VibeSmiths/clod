@@ -1,0 +1,17 @@
+"I want to build a Hybrid Agent Orchestrator using OpenClaw and Lynkr.
+
+The Goal:
+
+    Use my local RTX 5070 Ti (qwen2.5-coder:32b) for file management, boilerplate, and 'sensitive' code.
+
+    Create a Masked Session Proxy that routes 'Logic Heavy' tasks to free-tier cloud models (Claude, Gemini, GPT).
+
+    Implement Daisy-Chaining logic: When one free session hits a rate limit, automatically rotate to the next available 'Masked Session' without losing the coding context.
+
+Required Files to Build:
+
+    lynkr_config.yaml: Setup for rotating free-tier API endpoints.
+
+    session_masker.py: A script to 'sanitize' code snippets (removing local paths and keys) before sending them to the cloud.
+
+    openclaw_bridge.json: Configuration to make OpenClaw treat these rotated sessions as a single 'Super Provider'."

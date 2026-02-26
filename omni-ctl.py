@@ -12,7 +12,7 @@ from rich import box
 console = Console()
 
 SERVICES = [
-    ("open-webui",          "Chat UI",        "http://localhost:3002"),
+    ("omni-pipelines",      "Pipelines",      "http://localhost:9099"),
     ("perplexica-frontend", "AI Web Search",  "http://localhost:3000"),
     ("searxng",             "Search Engine",  "http://localhost:8080"),
     ("n8n",                 "Automation",     "http://localhost:5678"),
@@ -158,7 +158,7 @@ def pull_model():
 MENU = [
     ("1", "Start all Docker services",    start_all_docker),
     ("2", "Stop all Docker services",     stop_all_docker),
-    ("3", "Open WebUI (Chat)",            lambda: open_browser("http://localhost:3002")),
+    ("3", "Open Pipelines API",           lambda: open_browser("http://localhost:9099")),
     ("4", "Open Perplexica (Web Search)", lambda: open_browser("http://localhost:3000")),
     ("5", "Open ComfyUI (Image Gen)",     lambda: open_browser("http://localhost:8188")),
     ("6", "Open n8n (Automation)",        lambda: open_browser("http://localhost:5678")),

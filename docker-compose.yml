@@ -38,21 +38,24 @@ services:
     depends_on:
       - perplexica-backend
 
-  # ── Open WebUI — ChatGPT-style interface for Ollama ───────────────────────────
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: open-webui
+  # ── OmniAI Pipelines — Claude review + multi-LLM routing ─────────────────────
+  # Exposes an OpenAI-compatible API at localhost:9099
+  # Set ANTHROPIC_API_KEY in .env to activate Claude review pipe
+  omni-pipelines:
+    image: ghcr.io/open-webui/pipelines:main
+    container_name: omni-pipelines
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "9099:9099"
     volumes:
-      - open-webui-data:/app/backend/data
+      - ./pipelines:/app/pipelines
+      - pipelines-data:/app/data
     environment:
-      - PORT=3002
-      - OLLAMA_BASE_URL=http://localhost:11434
-      - WEBUI_SECRET_KEY=heatsync-omni-secret
-      - ENABLE_COMMUNITY_SHARING=false
-      - WEBUI_AUTH=false
-      - COMFYUI_BASE_URL=http://localhost:8188
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host-gateway:11434}
+      - PIPELINES_DIR=/app/pipelines
+    extra_hosts:
+      - "host-gateway:host-gateway"
 
   # ── n8n — self-hosted automation / AI agent workflows ────────────────────────
   n8n:
@@ -83,6 +86,6 @@ services:
 volumes:
   perplexica-uploads:
   perplexica-db:
-  open-webui-data:
+  pipelines-data:
   n8n-data:
   chroma-data:
