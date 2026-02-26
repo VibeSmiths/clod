@@ -161,6 +161,41 @@ class GPUBar(Static):
         self.update(t)
 
 
+class RamBar(Static):
+    """Live RAM usage bar."""
+    ram_text: reactive[str] = reactive("Loading…")
+
+    def on_mount(self) -> None:
+        self.refresh_ram()
+        self.set_interval(5, self.refresh_ram)
+
+    def refresh_ram(self) -> None:
+        try:
+            with open("/proc/meminfo") as f:
+                raw = f.read()
+            info: dict[str, int] = {}
+            for line in raw.splitlines():
+                k, v = line.split(":", 1)
+                info[k.strip()] = int(v.strip().split()[0])
+            total = info.get("MemTotal", 0)
+            avail = info.get("MemAvailable", 0)
+            used  = total - avail
+            used_gb  = used  / 1024 / 1024
+            total_gb = total / 1024 / 1024
+            pct    = used / total if total else 0
+            filled = round(10 * pct)
+            bar    = "█" * filled + "░" * (10 - filled)
+            self.ram_text = f"{used_gb:.1f}/{total_gb:.1f}GB [{bar}] {int(pct*100)}%"
+        except Exception:
+            self.ram_text = "N/A"
+
+    def watch_ram_text(self, val: str) -> None:
+        t = Text(f" RAM  {val}")
+        t.stylize("dim", 0, 5)
+        t.stylize("bright_green", 5)
+        self.update(t)
+
+
 class ServiceRow(Static):
     """One docker service status row."""
     status: reactive[str] = reactive("…")
@@ -287,8 +322,8 @@ class OmniPanel(App):
     }
 
     #sidebar {
-        width: 29;
-        min-width: 29;
+        width: 33;
+        min-width: 33;
         background: #07071a;
         border-right: solid #1e3e3e;
         overflow-y: auto;
@@ -340,6 +375,7 @@ class OmniPanel(App):
     }
 
     GPUBar { height: 2; padding: 1 0 0 0; }
+    RamBar { height: 2; padding: 0 0 0 0; }
 
     ServiceRow { height: 1; }
     OllamaRow  { height: 1; }
@@ -400,6 +436,7 @@ class OmniPanel(App):
         with Horizontal():
             with Vertical(id="sidebar"):
                 yield GPUBar()
+                yield RamBar()
                 yield Label("  Status", classes="sec")
                 for name, label in SERVICES:
                     yield ServiceRow(name, label)
@@ -407,24 +444,42 @@ class OmniPanel(App):
                 yield ComfyRow()
 
                 yield Label("  Docker", classes="sec")
-                yield SidebarBtn("▶", "Start Stack",  "docker_start")
-                yield SidebarBtn("■", "Stop Stack",   "docker_stop")
+                yield SidebarBtn("▶", "Start Stack",   "docker_start")
+                yield SidebarBtn("■", "Stop Stack",    "docker_stop")
 
                 yield Label("  Open", classes="sec")
-                yield SidebarBtn("⚙", "WebUI",        "open_webui")
-                yield SidebarBtn("⚙", "Perplexica",   "open_search")
-                yield SidebarBtn("⚙", "ComfyUI",      "open_comfy")
-                yield SidebarBtn("⚙", "n8n",          "open_n8n")
+                yield SidebarBtn("⚙", "WebUI",         "open_webui")
+                yield SidebarBtn("⚙", "Perplexica",    "open_search")
+                yield SidebarBtn("⚙", "ComfyUI",       "open_comfy")
+                yield SidebarBtn("⚙", "n8n",           "open_n8n")
 
                 yield Label("  Agent", classes="sec")
-                yield SidebarBtn("↺", "Restart Agent","restart_omni")
-                yield SidebarBtn("↺", "Refresh",      "refresh_all")
-                yield SidebarBtn("⎘", "Copy Reply",   "copy_response")
+                yield SidebarBtn("↺", "Restart Agent", "restart_omni")
+                yield SidebarBtn("↺", "Refresh",       "refresh_all")
+                yield SidebarBtn("⎘", "Copy Reply",    "copy_response")
 
-                yield Label("  Models", classes="sec")
-                for m in ollama_models():
-                    short = m if len(m) <= 22 else m[:19] + "…"
-                    yield Label(f"   · {short}", classes="")
+                yield Label("  Mode", classes="sec")
+                yield SidebarBtn("◉", "Safe Mode",     "mode_safe")
+                yield SidebarBtn("⚡", "Auto Mode",     "mode_auto")
+                yield SidebarBtn("⚠", "Paranoid",      "mode_paranoid")
+
+                yield Label("  Model", classes="sec")
+                yield SidebarBtn("■", "32b Coder",     "model_32b")
+                yield SidebarBtn("▸", "14b Fast",      "model_14b")
+                yield SidebarBtn("◐", "DeepSeek R1",   "model_reason")
+                yield SidebarBtn("◌", "Chat 8b",       "model_chat")
+                yield SidebarBtn("◎", "Vision 7b",     "model_vision")
+
+                yield Label("  Evolve", classes="sec")
+                yield SidebarBtn("▶", "Start Evolve",  "evolve_start")
+                yield SidebarBtn("■", "Stop Evolve",   "evolve_stop")
+                yield SidebarBtn("ℹ", "Evolve Status", "evolve_status")
+
+                yield Label("  Quick", classes="sec")
+                yield SidebarBtn("✓", "Self-Test",     "task_selftest")
+                yield SidebarBtn("⊞", "System Info",   "task_sysinfo")
+                yield SidebarBtn("◼", "Save Session",  "task_save")
+                yield SidebarBtn("✕", "Clear History", "task_clear")
 
             with Vertical(id="main"):
                 yield RichLog(id="chat_log", auto_scroll=True,
@@ -445,16 +500,50 @@ class OmniPanel(App):
 
     def sidebar_action(self, action_id: str) -> None:
         {
-            "docker_start":  self._docker_start,
-            "docker_stop":   self._docker_stop,
-            "open_webui":    lambda: subprocess.Popen(["xdg-open", "http://localhost:3002"]),
-            "open_search":   lambda: subprocess.Popen(["xdg-open", "http://localhost:3000"]),
-            "open_comfy":    lambda: subprocess.Popen(["xdg-open", COMFYUI_URL]),
-            "open_n8n":      lambda: subprocess.Popen(["xdg-open", "http://localhost:5678"]),
-            "restart_omni":  self._start_omni,
-            "refresh_all":   self.action_refresh_all,
-            "copy_response": self.action_copy_response,
+            # Docker
+            "docker_start":   self._docker_start,
+            "docker_stop":    self._docker_stop,
+            # Open browser
+            "open_webui":     lambda: subprocess.Popen(["xdg-open", "http://localhost:3002"]),
+            "open_search":    lambda: subprocess.Popen(["xdg-open", "http://localhost:3000"]),
+            "open_comfy":     lambda: subprocess.Popen(["xdg-open", COMFYUI_URL]),
+            "open_n8n":       lambda: subprocess.Popen(["xdg-open", "http://localhost:5678"]),
+            # Agent
+            "restart_omni":   self._start_omni,
+            "refresh_all":    self.action_refresh_all,
+            "copy_response":  self.action_copy_response,
+            # Mode
+            "mode_safe":      lambda: self._set_mode("cautious"),
+            "mode_auto":      lambda: self._set_mode("auto"),
+            "mode_paranoid":  lambda: self._set_mode("paranoid"),
+            # Model
+            "model_32b":      lambda: self._set_model("qwen2.5-coder:32b-instruct-q4_K_M"),
+            "model_14b":      lambda: self._set_model("qwen2.5-coder:14b"),
+            "model_reason":   lambda: self._set_model("deepseek-r1:14b"),
+            "model_chat":     lambda: self._set_model("llama3.1:8b"),
+            "model_vision":   lambda: self._set_model("qwen2.5vl:7b"),
+            # Evolve
+            "evolve_start":   lambda: self._write("/evolve"),
+            "evolve_stop":    lambda: self._write("/evolve stop"),
+            "evolve_status":  lambda: self._write("/evolve status"),
+            # Quick tasks
+            "task_selftest":  lambda: self._write("/test"),
+            "task_sysinfo":   lambda: self._write("system_snapshot"),
+            "task_save":      lambda: self._write("/save"),
+            "task_clear":     lambda: self._write("/clear"),
         }.get(action_id, lambda: None)()
+
+    def _set_mode(self, mode: str) -> None:
+        self._write(f"/mode {mode}")
+        self._sys(f"[Mode → {mode}]")
+
+    def _set_model(self, model_name: str) -> None:
+        self._write(f"/model {model_name}")
+        self._sys(f"[Model → {model_name}]")
+        try:
+            self.query_one("#status_bar", StatusBar).model_name = model_name
+        except Exception:
+            pass
 
     # ── OmniAI subprocess ──────────────────────────────────────────────────────
 
