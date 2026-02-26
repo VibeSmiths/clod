@@ -1,6 +1,72 @@
 version: "3.8"
 
+# ── Network topology (security) ───────────────────────────────────────────────
+#
+#  omni-internal  (isolated — no internet)
+#    searxng, perplexica, n8n, chroma, omni-pipelines
+#    + the OmniAI agent container (if running in Docker)
+#
+#  omni-gateway   (internet-capable — LiteLLM only)
+#    litellm → api.anthropic.com, api.openai.com, etc.
+#
+#  LiteLLM bridges both: receives requests on omni-internal,
+#  forwards to external providers on omni-gateway.
+#  No other service has internet access.
+#
+networks:
+  omni-internal:
+    driver: bridge
+    internal: true          # ← no internet egress from this network
+  omni-gateway:
+    driver: bridge          # LiteLLM's outbound network
+
 services:
+
+  # ── LiteLLM — secure unified LLM gateway ─────────────────────────────────────
+  # All API keys live here. OmniAI calls localhost:4000 (OpenAI-compatible).
+  # Enforces spend caps, rate limits, response caching, and fallback routing.
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: omni-litellm
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:4000"  # localhost only — not exposed externally
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-omni-local-dev}
+      - LITELLM_MAX_BUDGET=${LITELLM_MAX_BUDGET:-20.0}
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--detailed_debug"]
+    networks:
+      - omni-internal   # receives requests from OmniAI / internal services
+      - omni-gateway    # makes outbound calls to external LLM APIs
+    extra_hosts:
+      - "host-gateway:host-gateway"  # reaches host Ollama at 11434
+
+  # ── OmniAI Pipelines — Claude review + multi-LLM routing ─────────────────────
+  omni-pipelines:
+    image: ghcr.io/open-webui/pipelines:main
+    container_name: omni-pipelines
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9099:9099"  # localhost only
+    volumes:
+      - ./pipelines:/app/pipelines
+      - pipelines-data:/app/data
+    environment:
+      # Pipelines routes through LiteLLM — no direct API key access needed
+      - LITELLM_BASE_URL=http://litellm:4000
+      - LITELLM_API_KEY=${LITELLM_MASTER_KEY:-sk-omni-local-dev}
+      - PIPELINES_DIR=/app/pipelines
+    networks:
+      - omni-internal
+    depends_on:
+      - litellm
 
   # ── SearXNG — private meta search engine ─────────────────────────────────────
   searxng:
@@ -8,13 +74,15 @@ services:
     container_name: searxng
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"  # localhost only
     volumes:
       - ./searxng:/etc/searxng
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080
+    networks:
+      - omni-internal
 
-  # ── Perplexica — AI web search (uses SearXNG + Ollama) ───────────────────────
+  # ── Perplexica — AI web search ────────────────────────────────────────────────
   perplexica-backend:
     image: itzcrazykns1337/perplexica-backend:main
     container_name: perplexica-backend
@@ -38,32 +106,13 @@ services:
     depends_on:
       - perplexica-backend
 
-  # ── OmniAI Pipelines — Claude review + multi-LLM routing ─────────────────────
-  # Exposes an OpenAI-compatible API at localhost:9099
-  # Set ANTHROPIC_API_KEY in .env to activate Claude review pipe
-  omni-pipelines:
-    image: ghcr.io/open-webui/pipelines:main
-    container_name: omni-pipelines
-    restart: unless-stopped
-    ports:
-      - "9099:9099"
-    volumes:
-      - ./pipelines:/app/pipelines
-      - pipelines-data:/app/data
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OLLAMA_URL=${OLLAMA_URL:-http://host-gateway:11434}
-      - PIPELINES_DIR=/app/pipelines
-    extra_hosts:
-      - "host-gateway:host-gateway"
-
-  # ── n8n — self-hosted automation / AI agent workflows ────────────────────────
+  # ── n8n — automation workflows ────────────────────────────────────────────────
   n8n:
     image: n8nio/n8n:latest
     container_name: n8n
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      - "127.0.0.1:5678:5678"  # localhost only
     volumes:
       - n8n-data:/home/node/.n8n
     environment:
@@ -72,6 +121,8 @@ services:
       - N8N_PROTOCOL=http
       - WEBHOOK_URL=http://localhost:5678
       - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
+    networks:
+      - omni-internal
 
   # ── Chroma — vector DB for persistent AI memory ───────────────────────────────
   chroma:
@@ -79,9 +130,11 @@ services:
     container_name: chroma
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"  # localhost only
     volumes:
       - chroma-data:/chroma/chroma
+    networks:
+      - omni-internal
 
 volumes:
   perplexica-uploads:

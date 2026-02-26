@@ -242,9 +242,13 @@ SAFETY TOOLS (use these before and after self-modification):
   list_backups()              ← show available restore points
   run_self_test()             ← verify all tools, Ollama, memory, shell, markers are healthy
 
-EXTERNAL LLMs (call online AI when local models need help):
-  ask_llm(provider, prompt, model="", system="", temperature=0.7)
-                              ← providers: claude, openai, gemini, groq
+EXTERNAL LLMs — always route through gateway first (keys stay secure in LiteLLM):
+  ask_llm("gateway", prompt, model="claude-opus")   ← PREFERRED — routes via LiteLLM
+  ask_llm("gateway", prompt, model="gpt-4o")        ← models: claude-opus, claude-sonnet,
+  ask_llm("gateway", prompt, model="groq-fast")         gpt-4o, o3-mini, groq-fast,
+  ask_llm("gateway", prompt, model="gemini-flash")       gemini-flash, together-deepseek,
+  ask_llm("gateway", prompt, model="local-32b")          local-32b, local-reason, local-vision
+  ask_llm(provider, prompt, model="", ...)          ← direct (legacy): claude, openai, groq, gemini
   set_api_key(provider, key)  ← store key: set_api_key("anthropic", "sk-ant-...")
   sandbox_test_function(function_code, test_call)
                               ← test new code in isolated Docker/subprocess BEFORE adding it
@@ -1156,10 +1160,23 @@ def self_improve(tool_name: str, description: str, function_code: str,
     )
 
 
+LITELLM_URL = os.environ.get("LITELLM_URL", "http://localhost:4000")
+LITELLM_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-omni-local-dev")
+
 def ask_llm(provider: str, prompt: str, model: str = "", system: str = "",
             temperature: float = 0.7) -> str:
     """Call an external LLM API for research, code help, or second opinions.
-    Providers: claude, openai, gemini, groq, perplexity, mistral, together
+
+    PREFERRED — route through local LiteLLM gateway (handles keys + rate limits):
+      provider = "gateway"   → LiteLLM at localhost:4000 (OpenAI-compatible)
+      model    = any model name from litellm_config.yaml, e.g.:
+                 "claude-opus", "gpt-4o", "groq-fast", "gemini-flash",
+                 "local-32b", "together-deepseek"
+
+    DIRECT providers (legacy — require keys in ~/.omni_ai/api_keys.json):
+      "claude", "openai", "groq", "gemini", "perplexity", "mistral",
+      "together", "fireworks", "cohere"
+
     Or pass any OpenAI-compatible base URL as provider for custom endpoints.
     API keys stored in ~/.omni_ai/api_keys.json — use set_api_key() to add them.
     """
@@ -1173,6 +1190,38 @@ def ask_llm(provider: str, prompt: str, model: str = "", system: str = "",
             pass
 
     prov = provider.lower().strip()
+
+    # ── Gateway route (preferred — keys stay in LiteLLM, never in agent) ────────
+    if prov in ("gateway", "litellm"):
+        use_model = model or "claude-opus"   # default to best model
+        headers   = {
+            "Authorization": f"Bearer {LITELLM_KEY}",
+            "Content-Type":  "application/json",
+        }
+        msgs: list = []
+        if system:
+            msgs.append({"role": "system", "content": system})
+        msgs.append({"role": "user", "content": prompt})
+        try:
+            r = requests.post(
+                f"{LITELLM_URL}/v1/chat/completions",
+                headers=headers,
+                json={"model": use_model, "messages": msgs,
+                      "temperature": temperature},
+                timeout=120,
+            )
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+        except requests.HTTPError as e:
+            if e.response.status_code == 404:
+                return (f"LiteLLM: model '{use_model}' not found. "
+                        f"Check litellm_config.yaml for available model names.")
+            return f"LiteLLM gateway error {e.response.status_code}: {e.response.text[:400]}"
+        except requests.ConnectionError:
+            return (f"LiteLLM not reachable at {LITELLM_URL}. "
+                    f"Start it with: docker compose up -d litellm")
+        except Exception as e:
+            return f"LiteLLM call failed: {e}"
 
     # OpenAI-compatible providers (same API format, different base URL + model)
     _OAI_COMPAT = {

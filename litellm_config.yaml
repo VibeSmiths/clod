@@ -1,0 +1,110 @@
+# LiteLLM unified gateway config
+# Docs: https://docs.litellm.ai/docs/proxy/configs
+#
+# All API keys live here (injected from .env) — OmniAI never sees them.
+# OmniAI calls http://localhost:4000 using standard OpenAI format.
+
+model_list:
+
+  # ── Anthropic ────────────────────────────────────────────────────────────────
+  - model_name: claude-opus
+    litellm_params:
+      model: anthropic/claude-opus-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ── OpenAI ───────────────────────────────────────────────────────────────────
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: o3-mini
+    litellm_params:
+      model: openai/o3-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # ── Groq (fast free tier) ────────────────────────────────────────────────────
+  - model_name: groq-fast
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: groq-vision
+    litellm_params:
+      model: groq/llama-3.2-90b-vision-preview
+      api_key: os.environ/GROQ_API_KEY
+
+  # ── Google Gemini ────────────────────────────────────────────────────────────
+  - model_name: gemini-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-pro
+    litellm_params:
+      model: gemini/gemini-2.0-pro-exp
+      api_key: os.environ/GEMINI_API_KEY
+
+  # ── Together AI (open-source models) ────────────────────────────────────────
+  - model_name: together-llama
+    litellm_params:
+      model: together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo
+      api_key: os.environ/TOGETHER_API_KEY
+
+  - model_name: together-deepseek
+    litellm_params:
+      model: together_ai/deepseek-ai/DeepSeek-V3
+      api_key: os.environ/TOGETHER_API_KEY
+
+  # ── Local Ollama (no key needed) ─────────────────────────────────────────────
+  - model_name: local-32b
+    litellm_params:
+      model: ollama/qwen2.5-coder:32b-instruct-q4_K_M
+      api_base: http://host-gateway:11434
+
+  - model_name: local-reason
+    litellm_params:
+      model: ollama/deepseek-r1:14b
+      api_base: http://host-gateway:11434
+
+  - model_name: local-vision
+    litellm_params:
+      model: ollama/qwen2.5vl:7b
+      api_base: http://host-gateway:11434
+
+litellm_settings:
+  # Response caching — reduces cost and latency on repeated queries
+  cache: true
+  cache_params:
+    type: local
+    ttl: 3600  # cache hits valid for 1 hour
+
+  # Never log full request/response bodies — privacy
+  drop_params: true
+
+  # Fallback chain: if claude-opus fails, try gpt-4o, then groq-fast
+  fallbacks:
+    - claude-opus: [gpt-4o, groq-fast, local-32b]
+    - gpt-4o:      [claude-sonnet, groq-fast]
+
+  # Retry on transient errors
+  num_retries: 3
+  request_timeout: 120
+
+general_settings:
+  # Master key — OmniAI uses this to authenticate to LiteLLM
+  # Set LITELLM_MASTER_KEY in .env
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+  # Hard spend cap — protects against runaway costs
+  # Adjust in .env with LITELLM_MAX_BUDGET
+  max_budget: 20.0        # USD
+  budget_duration: "30d"
+
+  # Per-model rate limits (requests per minute)
+  max_parallel_requests: 10
