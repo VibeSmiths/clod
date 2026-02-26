@@ -1,0 +1,88 @@
+version: "3.8"
+
+services:
+
+  # ── SearXNG — private meta search engine ─────────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./searxng:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080
+
+  # ── Perplexica — AI web search (uses SearXNG + Ollama) ───────────────────────
+  perplexica-backend:
+    image: itzcrazykns1337/perplexica-backend:main
+    container_name: perplexica-backend
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./perplexica/config.toml:/home/perplexica/config.toml
+      - perplexica-uploads:/home/perplexica/uploads
+      - perplexica-db:/home/perplexica/data
+    depends_on:
+      - searxng
+
+  perplexica-frontend:
+    image: itzcrazykns1337/perplexica-frontend:main
+    container_name: perplexica-frontend
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+      - NEXT_PUBLIC_WS_URL=ws://localhost:3001
+    depends_on:
+      - perplexica-backend
+
+  # ── Open WebUI — ChatGPT-style interface for Ollama ───────────────────────────
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      - PORT=3002
+      - OLLAMA_BASE_URL=http://localhost:11434
+      - WEBUI_SECRET_KEY=heatsync-omni-secret
+      - ENABLE_COMMUNITY_SHARING=false
+      - WEBUI_AUTH=false
+      - COMFYUI_BASE_URL=http://localhost:8188
+
+  # ── n8n — self-hosted automation / AI agent workflows ────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678
+      - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
+
+  # ── Chroma — vector DB for persistent AI memory ───────────────────────────────
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: chroma
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+
+volumes:
+  perplexica-uploads:
+  perplexica-db:
+  open-webui-data:
+  n8n-data:
+  chroma-data:
