@@ -11,7 +11,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
-USER_HOME="/home/mack3y"
+USER_HOME="/home/$USER"
 OMNI_DIR="$USER_HOME/omni-stack"
 
 echo "=== OmniAI Security Hardening for CachyOS ==="
@@ -31,7 +31,7 @@ echo "[2/5] Locking down sensitive files..."
 # .env — only owner can read
 if [[ -f "$OMNI_DIR/.env" ]]; then
     chmod 600 "$OMNI_DIR/.env"
-    chown mack3y:mack3y "$OMNI_DIR/.env"
+    chown $USER:$USER "$OMNI_DIR/.env"
     echo "  ✓ .env permissions → 600"
 fi
 

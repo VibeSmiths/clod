@@ -224,9 +224,9 @@ Or set it as the default review endpoint in omni-ai.py via `/model`.
 ### Python environments
 
 ```
-/home/mack3y/interpreter-venv/   # OmniAI agent + panel
-/home/mack3y/aider-venv/         # Aider code editor
-/home/mack3y/ai-audio-venv/      # faster-whisper voice recognition
+~/interpreter-venv/   # OmniAI agent + panel
+~/aider-venv/         # Aider code editor
+~/ai-audio-venv/      # faster-whisper voice recognition
 ```
 
 ### Key files

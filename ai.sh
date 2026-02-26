@@ -9,5 +9,5 @@
 # It executes shell commands, reads/writes files, searches the web, and more
 # without any confirmation prompts.
 
-exec /home/mack3y/interpreter-venv/bin/python3 \
-    /home/mack3y/omni-stack/omni-ai.py "$@"
+exec ~/interpreter-venv/bin/python3 \
+    ~/omni-stack/omni-ai.py "$@"

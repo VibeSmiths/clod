@@ -1,4 +1,4 @@
-use_default_settings: true
+use_default_settings: false  # start with a minimal engine list so we don't load absent or internet-only engines
 
 general:
   debug: false
@@ -35,9 +35,6 @@ engines:
   - name: github
     engine: github
     shortcut: gh
-  - name: stackoverflow
-    engine: stackoverflow
-    shortcut: so
   - name: arxiv
     engine: arxiv
     shortcut: ar

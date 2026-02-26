@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL maintainer="mack3y" \
+LABEL maintainer="$USER" \
       description="OmniAI — autonomous local AI vibecoder agent" \
       version="1.0"
 

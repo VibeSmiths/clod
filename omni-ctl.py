@@ -1,4 +1,4 @@
-#!/home/mack3y/interpreter-venv/bin/python3
+#!~/interpreter-venv/bin/python3
 """OmniAI Control Panel — manage all local AI services from one place."""
 
 import subprocess, sys, os, time, webbrowser, signal, threading
@@ -141,8 +141,8 @@ def launch_aichat():
     subprocess.Popen(cmd, shell=True)
 
 def launch_omni_ai():
-    cmd = ("konsole --new-tab -e /home/mack3y/interpreter-venv/bin/python3 "
-           "/home/mack3y/omni-stack/omni-ai.py")
+    cmd = ("konsole --new-tab -e ~/interpreter-venv/bin/python3 "
+           "~/omni-stack/omni-ai.py")
     subprocess.Popen(cmd, shell=True)
     console.print("[green]OmniAI Agent launched in new tab[/]")
 

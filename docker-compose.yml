@@ -25,6 +25,8 @@ services:
   # ── LiteLLM — secure unified LLM gateway ─────────────────────────────────────
   # All API keys live here. OmniAI calls localhost:4000 (OpenAI-compatible).
   # Enforces spend caps, rate limits, response caching, and fallback routing.
+  # Ports are intentionally bound to localhost; this service is for internal
+  # container-to-host communication only and is not exposed to other machines.
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: omni-litellm
@@ -53,6 +55,8 @@ services:
     image: ghcr.io/open-webui/pipelines:main
     container_name: omni-pipelines
     restart: unless-stopped
+    # This service provides internal pipeline routing. it listens on 9099
+    # but the port is bound to 127.0.0.1 so nothing outside the host can access
     ports:
       - "127.0.0.1:9099:9099"  # localhost only
     volumes:
@@ -73,14 +77,20 @@ services:
     image: searxng/searxng:latest
     container_name: searxng
     restart: unless-stopped
+    # search UI is accessible on localhost only; it's not exposed externally
     ports:
       - "127.0.0.1:8080:8080"  # localhost only
     volumes:
       - ./searxng:/etc/searxng
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080
+    # s e a r x n g needs outbound DNS/HTTP for most engines; attach to the
+    # `omni-gateway` network in addition to internal so it can resolve and
+    # query external sites.  Without this you will see "temporary failure in
+    # name resolution" errors and engines set to inactive.
     networks:
       - omni-internal
+      - omni-gateway
 
   # ── Perplexica — AI web search ────────────────────────────────────────────────
   perplexica-backend:
@@ -111,6 +121,7 @@ services:
     image: n8nio/n8n:latest
     container_name: n8n
     restart: unless-stopped
+    # automation workflows UI/API bound to localhost for internal use
     ports:
       - "127.0.0.1:5678:5678"  # localhost only
     volumes:
@@ -129,6 +140,7 @@ services:
     image: chromadb/chroma:latest
     container_name: chroma
     restart: unless-stopped
+    # vector database listens on localhost; keep internal only
     ports:
       - "127.0.0.1:8000:8000"  # localhost only
     volumes:
@@ -136,9 +148,40 @@ services:
     networks:
       - omni-internal
 
+  # ── OmniAI agent — build from local Dockerfile in this folder ───────────────
+  omni-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: omni-ai:latest
+    container_name: omni-ai
+    restart: unless-stopped
+    environment:
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - CHROMA_URL=${CHROMA_URL:-http://chroma:8000}
+      - PIPELINES_URL=${PIPELINES_URL:-http://omni-pipelines:9099}
+    volumes:
+      - omni_data:/root/.omni_ai
+      - omni_backups:/app/backups
+    networks:
+      - omni-internal
+      - omni-gateway
+    depends_on:
+      - litellm
+      - searxng
+      - chroma
+      - omni-pipelines
+
+# (You can paste the services from your other compose file here; e.g. nginx, stable-diffusion,
+# ollama-*, open-webui, tts-*, etc.  They simply go at the same indentation level as
+# the services above.)
+
 volumes:
-  perplexica-uploads:
+  perplexica-uploads: 
   perplexica-db:
   pipelines-data:
   n8n-data:
   chroma-data:
+  omni_data:
+  omni_backups:

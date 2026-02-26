@@ -5,5 +5,5 @@ exec konsole \
   --hide-menubar \
   --hide-tabbar \
   --nofork \
-  -e /home/mack3y/interpreter-venv/bin/python3 \
-     /home/mack3y/omni-stack/omni-panel.py
+  -e ~/interpreter-venv/bin/python3 \
+     ~/omni-stack/omni-panel.py

@@ -1,4 +1,4 @@
-#!/home/mack3y/interpreter-venv/bin/python3
+#!~/interpreter-venv/bin/python3
 """OmniAI — autonomous vibecoder home base."""
 
 import os, sys, re, queue, select, signal, subprocess, threading, time, tempfile
@@ -30,9 +30,9 @@ def _clipboard_copy(text: str) -> bool:
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-PYTHON      = "/home/mack3y/interpreter-venv/bin/python3"
-VOICE_PY    = "/home/mack3y/ai-audio-venv/bin/python3"
-OMNI_AI     = "/home/mack3y/omni-stack/omni-ai.py"
+PYTHON      = "~/interpreter-venv/bin/python3"
+VOICE_PY    = "~/ai-audio-venv/bin/python3"
+OMNI_AI     = "~/omni-stack/omni-ai.py"
 OLLAMA_URL  = "http://localhost:11434"
 COMFYUI_URL = "http://localhost:8188"
 
@@ -398,7 +398,7 @@ class OmniPanel(App):
     SUB_TITLE = "⚙ autonomous vibecoder ⚙"
 
     CSS = """
-    /* ── MACK3Y space-hacker palette ─────────────────────────────────────── */
+    /* ── $USER space-hacker palette ─────────────────────────────────────── */
     Screen {
         background: #050510;
     }

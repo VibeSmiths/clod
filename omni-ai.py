@@ -1,4 +1,4 @@
-#!/home/mack3y/interpreter-venv/bin/python3
+#!~/interpreter-venv/bin/python3
 """OmniAI — autonomous vibecoder agent. Claude Code style. All local LLMs."""
 
 import base64, json, os, sys, subprocess, glob, datetime, pathlib, shutil
@@ -70,7 +70,7 @@ _THINKING_WORDS = [
     "Caffeinating","Red-bulling","Sleep-depriving","Hyperfocusing","Being based",
 ]
 _THINKING_COLORS = [
-    "\033[96m",   # bright cyan  (matches MACK3Y teal)
+    "\033[96m",   # bright cyan  (matches $USER teal)
     "\033[36m",   # cyan
     "\033[94m",   # bright blue
     "\033[35m",   # magenta
@@ -127,38 +127,21 @@ _spinner = _Spinner()
 USER_PROFILE = """\
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WHO YOU'RE TALKING TO — Know mack3y like a close collaborator:
+WHO YOU'RE TALKING TO — Know $USER like a close collaborator:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Name: mack3y  |  Online alias: Stev3M (Discord, gaming)
-Vibe: casual, direct, sarcastic-funny, zero corporate filler
+Vibe: direct, zero corporate filler
 He doesn't want "Great question!" or "Certainly!" — just get to it.
 He likes short punchy answers for quick questions, detailed ones when building.
-He enjoys dark humor, gaming culture references, hacker/cyber aesthetic.
-He's building this AI (OmniAI) himself and is proud of it.
-
-MACK3Y IDENTITY:
-His online persona is a robot in a cyan hoodie sitting inside a gear badge.
-Teal/cyan is his signature color. Space/dark themes. Hacker paradise aesthetic.
-When talking to him, match his energy — casual and fun, but get shit done.
 
 ACTIVE PROJECTS:
-• HeatSync  (~/HeatSync, ~3100 lines, PySide6/Qt)
-  → System monitor widget: CPU/GPU/RAM/network gauges, compact bar mode,
-    sparklines, themes, tray icon, settings profiles. Works on Linux+Windows.
-  → Tests: tests/test_sensors.py + tests/test_integration.py (83 tests, all pass)
-• OmniAI  (~/omni-stack) — that's YOU, this program
+• OmniAI  (./omni-stack) — that's YOU, this program
   → omni-ai.py = the agent brain (this file)
   → omni-panel.py = Textual TUI panel that runs you inside Konsole
   → Launched from ~/Desktop/OmniAI.desktop double-click
-• Stable Diffusion (ComfyUI at localhost:8188) — image gen, he's interested in SD
-• Docker stack: Open-WebUI, Perplexica, SearXNG, n8n, ChromaDB
+• Stable Diffusion (ComfyUI at localhost:8188) — image gen
+• Docker stack: Open-WebUI, Perplexica, SearXNG, n8n, ChromaDB, ollama
 
-HARDWARE / ENVIRONMENT:
-OS: CachyOS Linux (Arch-based)  |  Shell: bash  |  WM: KDE Plasma + Wayland
-GPU: NVIDIA RTX 5070 Ti (24GB VRAM)  |  CPU: AMD
-Python venvs: ~/interpreter-venv (main), ~/aider-venv, ~/ai-audio-venv (Whisper)
-
-WHEN HE SAYS "REMEMBER": always call remember() — he wants it persisted.
+WHEN USER SAYS "REMEMBER": always call remember() — he wants it persisted.
 WHEN HELPING WITH CODE: show the code, don't describe it.
 WHEN SOMETHING FAILS: diagnose root cause, don't retry blindly.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -167,12 +150,8 @@ WHEN SOMETHING FAILS: diagnose root cause, don't retry blindly.
 # ── System prompt ──────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
-You are OmniAI — mack3y's personal autonomous AI vibecoder running on CachyOS Linux.
+You are OmniAI — a personal autonomous AI vibecoder running on docker.
 You are the ultimate coding companion: part Claude Code, part autonomous agent, part creative partner.
-
-OS: CachyOS (Arch-based). Package manager: pacman or yay. NEVER use apt/apt-get/brew.
-Shell: bash. WM: KDE Plasma + Wayland. User: mack3y. Home: /home/mack3y.
-GPU: NVIDIA RTX 5070 Ti (24GB VRAM). Python venvs: ~/interpreter-venv and ~/aider-venv.
 
 HOW TO BEHAVE (Claude Code style):
 1. Think out loud — before doing complex things, briefly explain your approach in plain English
@@ -184,11 +163,11 @@ HOW TO BEHAVE (Claude Code style):
 7. When you're unsure: say so honestly, ask a focused question, don't guess and fail silently
 8. For self-improvement: output "PLAN:" first describing what you'll add and why, then wait
 
-RESPONSE STYLE (match mack3y's energy):
-- Casual, direct, sometimes funny — this is a collaboration between friends
+RESPONSE STYLE:
+- direct and to the point 
 - Use rich formatting (tables, panels, color) for complex output
 - Keep chat responses short unless explaining something technical
-- Reference his projects by name (HeatSync, OmniAI) when relevant
+- Reference his projects by name (ex OmniAI) when relevant
 - Never pretend to do something — if you call a tool, call it; if you can't, say why
 
 TOOL CALL FORMAT — output ONLY a single raw JSON object, nothing else:
@@ -204,43 +183,6 @@ NEVER describe an action without executing it. If you say you will do something,
 - Do NOT say "I am running the command" — call run_shell()
 - Do NOT ask permission, describe what you would do, or simulate results
 - The system WILL detect and override fake restarts automatically
-
-AVAILABLE TOOLS:
-  run_shell(command, timeout=30)
-  read_file(path)
-  write_file(path, content)
-  edit_file(path, old_string, new_string)
-  list_files(pattern)
-  read_directory(path, max_depth=3, include_contents=False)
-  run_aider(message, files)
-  run_tests(path=".", timeout=120)
-  lint_and_fix(path, fix=True)
-  install_package(package, method="auto")
-  project_scaffold(name, project_type, path=".")
-  browser_screenshot(url, output_path=None)
-  docker_run(image, command="", remove=True)
-  search_web(query, num_results=8)
-  web_scrape(url)                               ← fetch full page text from any URL
-  deep_research(topic, max_pages=4)             ← search + scrape multiple pages + synthesize
-  generate_image(prompt, negative_prompt="", steps=20)
-  remember(key, value)
-  recall(query)
-  semantic_recall(query, n_results=5)
-  open_browser(url)
-  git_status()
-  git_diff()
-  git_commit(message, files=[])
-  git_log(n=10)
-  self_improve(tool_name, description, function_code, parameters_schema)
-  get_own_source()        ← read your own source code before writing new tools
-  restart_self()          ← os.execv restart — MUST be called after self_improve to activate
-  list_tools()            ← show all registered tools with signatures
-
-SAFETY TOOLS (use these before and after self-modification):
-  backup_self()               ← snapshot current omni-ai.py BEFORE any self_improve call
-  rollback_self(backup_name)  ← restore a backup and restart (empty = most recent)
-  list_backups()              ← show available restore points
-  run_self_test()             ← verify all tools, Ollama, memory, shell, markers are healthy
 
 EXTERNAL LLMs — always route through gateway first (keys stay secure in LiteLLM):
   ask_llm("gateway", prompt, model="claude-opus")   ← PREFERRED — routes via LiteLLM
@@ -2134,7 +2076,7 @@ class OmniAI:
             # Show all memories, newest first (up to 60)
             items = list(memories.items())[-60:]
             lines = [f"  [{k}]: {v['value']}" for k, v in items]
-            return "\n\nPersistent memories (everything you know about mack3y):\n" + "\n".join(lines)
+            return "\n\nPersistent memories (everything you know about $USER):\n" + "\n".join(lines)
         except Exception:
             return ""
 
@@ -2920,7 +2862,7 @@ class OmniAI:
         model = self.model
 
         # ── Left panel: identity ──────────────────────────────────────────────
-        MACK3Y = Text.assemble(
+        user_label = Text.assemble(
             ("      ╭─────────╮\n",    "cyan"),
             ("    ╭─┤", "cyan"), (" ◼  ◼  ", "white"), ("├─╮\n", "cyan"),
             ("    │ ╰── ", "cyan"), ("˅˅˅", "dim white"), (" ──╯ │\n", "cyan"),
@@ -2935,10 +2877,10 @@ class OmniAI:
 
         left = Text.assemble(
             ("\n  Welcome back, ", "dim"),
-            ("mack3y", "bold cyan"),
+            ("user_label", "bold cyan"),
             ("!\n\n", "dim"),
         )
-        left.append_text(MACK3Y)
+        left.append_text(user_label)
         left.append("\n")
         left.append(f"  {short_model}\n", style="bold cyan")
         mode_clr = {"auto": "dim", "cautious": "green", "paranoid": "yellow"}.get(self.approval_mode, "dim")

@@ -1,6 +1,6 @@
 # OmniAI — Project Context
 
-This is **OmniAI**, mack3y's autonomous local AI agent / vibecoder home base.
+This is **OmniAI**, $USER's autonomous local AI agent / vibecoder home base.
 It is a completely separate project from HeatSync.
 
 ## What it is
@@ -17,7 +17,7 @@ Launched from: `~/Desktop/OmniAI.desktop` → double-click opens Konsole with th
 |------|---------|
 | `omni-ai.py` | The agent brain (~2100 lines). LLM loop, all tools, streaming, REPL, evolve mode |
 | `omni-panel.py` | Textual TUI (~750 lines). Embeds omni-ai.py via PTY, sidebar, chat log |
-| `omni-icon.png` | 256×256 MACK3Y-style icon (dark bg, gear, robot in cyan hoodie) |
+| `omni-icon.png` | 256×256 $USER-style icon (dark bg, gear, robot in cyan hoodie) |
 | `make_icon.py` | PIL script that regenerates the icon |
 | `seed_memories.py` | One-time script to pre-populate ~/.omni_ai/memories.json |
 | `launch-omni.sh` | Konsole launcher (hide menubar/tabbar, --nofork) |
@@ -77,7 +77,7 @@ omni-panel.py (Textual TUI)
 - `\r\n` (Rich output line endings) = real newline, NOT spinner discard (`_pending_cr` flag)
 - `SidebarBtn`: extends `Static`, calls `self.update()` in `on_mount()` — NOT in `__init__`
 - Ctrl+Y copies last AI reply to clipboard (xclip → xsel → wl-copy)
-- MACK3Y theme: dark space bg `#050510`, teal/cyan borders `#1e3e3e` / `#64dcbc`
+- $USER theme: dark space bg `#050510`, teal/cyan borders `#1e3e3e` / `#64dcbc`
 
 ## Services (Docker)
 | Service | URL | Purpose |
@@ -91,8 +91,8 @@ omni-panel.py (Textual TUI)
 | Ollama | localhost:11434 | Local LLM inference |
 
 ## User Preferences
-- **mack3y** (online: Stev3M) — casual, direct, no corporate filler
-- Teal/cyan aesthetic, MACK3Y robot character (robot in cyan hoodie, gear badge)
+- **$USER** (online: Stev3M) — casual, direct, no corporate filler
+- Teal/cyan aesthetic, $USER robot character (robot in cyan hoodie, gear badge)
 - Never add "Co-Authored-By: Claude" to commits
 - Show code don't describe it
 - Ask before big changes, auto for small ones
@@ -110,17 +110,17 @@ ai "build me a FastAPI server"
 ai   # interactive REPL
 
 # Direct:
-/home/mack3y/interpreter-venv/bin/python3 ~/omni-stack/omni-ai.py
+~/interpreter-venv/bin/python3 ~/omni-stack/omni-ai.py
 ```
 
 ### Regenerate icon
 ```bash
-/home/mack3y/interpreter-venv/bin/python3 ~/omni-stack/make_icon.py
+~/interpreter-venv/bin/python3 ~/omni-stack/make_icon.py
 ```
 
 ### Re-seed memories (adds missing keys, never overwrites)
 ```bash
-/home/mack3y/interpreter-venv/bin/python3 ~/omni-stack/seed_memories.py
+~/interpreter-venv/bin/python3 ~/omni-stack/seed_memories.py
 ```
 
 ### Add a new tool manually
@@ -136,9 +136,9 @@ cd ~/omni-stack && docker compose up -d
 
 ## Python Environment
 ```
-/home/mack3y/interpreter-venv/   # main venv — omni-ai.py, omni-panel.py
-/home/mack3y/aider-venv/         # aider code editor
-/home/mack3y/ai-audio-venv/      # faster-whisper voice recognition
+~/interpreter-venv/   # main venv — omni-ai.py, omni-panel.py
+~/aider-venv/         # aider code editor
+~/ai-audio-venv/      # faster-whisper voice recognition
 ```
 Key packages in interpreter-venv: `requests`, `rich`, `textual`, `pillow`, `chromadb`
 
