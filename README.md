@@ -98,7 +98,7 @@ docker run -it --rm \
 
 ## Services Stack
 
-Start / stop all services:
+### Base stack (no GPU required)
 
 ```bash
 cd ~/omni-stack
@@ -114,8 +114,64 @@ docker compose logs -f    # watch logs
 | **SearXNG** | localhost:8080 | Private search (used by search_web tool) |
 | **n8n** | localhost:5678 | Automation workflows |
 | **ChromaDB** | localhost:8000 | Vector memory (semantic_recall tool) |
-| **ComfyUI** | localhost:8188 | Stable Diffusion image generation (host) |
-| **Ollama** | localhost:11434 | Local LLM inference (host) |
+
+### Full stack — Ollama + ComfyUI in Docker (`docker-compose.local.yml`)
+
+Containerises the two services that normally run as host processes.
+Bind-mounts your existing model directories — **no re-downloading needed**.
+
+#### Prerequisites
+
+```bash
+# 1. Install nvidia-container-toolkit (required for GPU in Docker)
+sudo pacman -S nvidia-container-toolkit      # CachyOS / Arch
+# sudo apt-get install -y nvidia-container-toolkit   # Ubuntu
+
+# 2. Restart Docker daemon
+sudo systemctl restart docker
+
+# 3. Stop the host services (frees ports 11434 and 8188)
+sudo systemctl stop ollama
+# Kill any running ComfyUI terminal process
+```
+
+#### Build ComfyUI image (first time only)
+
+```bash
+docker compose -f docker-compose.local.yml build comfyui
+```
+
+#### Run GPU services only
+
+```bash
+docker compose -f docker-compose.local.yml up -d
+```
+
+#### Run everything in Docker (recommended when doing full containerised deploy)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+```
+
+#### Stop everything
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml down
+```
+
+| Service | URL | Purpose |
+|---|---|---|
+| **ollama** | localhost:11434 | Local LLM inference (GPU) |
+| **comfyui** | localhost:8188 | Stable Diffusion image generation (GPU) |
+| **omni-pipelines** | localhost:9099 | Claude review pipeline |
+| **Perplexica** | localhost:3000 | AI-powered web search |
+| **SearXNG** | localhost:8080 | Private search |
+| **n8n** | localhost:5678 | Automation workflows |
+| **ChromaDB** | localhost:8000 | Vector memory |
+
+> **RTX 5070 Ti note:** The ComfyUI image uses `nvidia/cuda:12.6.3` + PyTorch cu126 wheels.
+> Driver 590+ (Blackwell) is fully supported. If you hit CUDA errors, rebuild with `--no-cache`
+> after updating your nvidia-container-toolkit.
 
 ---
 

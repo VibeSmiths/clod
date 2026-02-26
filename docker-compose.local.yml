@@ -1,0 +1,89 @@
+version: "3.8"
+
+# ── Local-to-Docker conversion ────────────────────────────────────────────────
+#
+# Containerises the two services that normally run as host processes:
+#   • Ollama  (LLM inference)  — port 11434
+#   • ComfyUI (image gen)      — port 8188
+#
+# Bind-mounts your existing model/data directories so nothing needs
+# to be re-downloaded.  All models, blobs, custom nodes, outputs
+# remain on the host filesystem.
+#
+# ── Usage ─────────────────────────────────────────────────────────────────────
+#
+# GPU services only (Ollama + ComfyUI):
+#   docker compose -f docker-compose.local.yml up -d
+#
+# Full stack (all services in Docker — recommended):
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+#
+# 1. Install nvidia-container-toolkit:
+#      sudo pacman -S nvidia-container-toolkit          # CachyOS / Arch
+#      sudo apt-get install -y nvidia-container-toolkit # Ubuntu/Debian
+#
+# 2. Restart Docker:
+#      sudo systemctl restart docker
+#
+# 3. Stop the host services first (so port 11434 / 8188 are free):
+#      sudo systemctl stop ollama
+#      # kill ComfyUI if it's running in a terminal
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Ollama — local LLM inference ────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      # Reuse host model cache — no re-download needed
+      - /var/lib/ollama:/var/lib/ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_MODELS=/var/lib/ollama
+      # Raise context limit to match omni-ai.py config
+      - OLLAMA_NUM_CTX=16384
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ── ComfyUI — Stable Diffusion image generation ─────────────────────────────
+  comfyui:
+    build:
+      # Build context = ComfyUI source dir (so COPY requirements.txt works)
+      context: /home/mack3y/ComfyUI
+      dockerfile: /home/mack3y/omni-stack/Dockerfile.comfyui
+    image: omni-comfyui:latest
+    container_name: comfyui
+    restart: unless-stopped
+    ports:
+      - "8188:8188"
+    volumes:
+      # Live code mount — edits on disk reflect immediately
+      - /home/mack3y/ComfyUI:/app
+      # Models and outputs stay on host — no copy needed
+      - /home/mack3y/ComfyUI/models:/app/models
+      - /home/mack3y/ComfyUI/custom_nodes:/app/custom_nodes
+      - /home/mack3y/ComfyUI/output:/app/output
+      - /home/mack3y/ComfyUI/input:/app/input
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
