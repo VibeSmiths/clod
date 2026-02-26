@@ -315,6 +315,82 @@ class StatusBar(Static):
         ))
 
 
+# @@INSERT_WIDGET@@
+
+
+class ActivityBar(Static):
+    """Live task-progress line — shows current action + elapsed time.
+
+    Mirrors the Claude Code status line:
+      ⟳ Calling run_shell…  (12s)
+      ✓ Done  (8s)          ← fades after 3 s
+    """
+
+    def __init__(self) -> None:
+        super().__init__("")
+        self._start:   float = 0.0   # wall time when user sent message
+        self._action:  str   = ""    # most recent tool/action text
+        self._active:  bool  = False # True while AI is working
+        self._done_at: float = 0.0   # wall time when AI replied
+
+    def on_mount(self) -> None:
+        self.set_interval(0.5, self._tick)
+
+    # ── Called by OmniPanel ────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        """User sent a message — begin timing."""
+        self._start  = time.time()
+        self._action = "Thinking"
+        self._active = True
+        self._done_at = 0.0
+        self._render()
+
+    def set_action(self, action: str) -> None:
+        """Tool call detected — update action label."""
+        if not self._active:
+            self._start  = time.time()
+            self._active = True
+        self._action = action
+        self._render()
+
+    def done(self) -> None:
+        """AI reply arrived — show Done then fade."""
+        self._active  = False
+        self._done_at = time.time()
+        elapsed = self._done_at - self._start if self._start else 0
+        self.update(Text.assemble(
+            (" ✓ ", "bold green"),
+            ("Done", "bright_white"),
+            (f"  ({elapsed:.0f}s)", "dim"),
+        ))
+
+    # ── Internal ───────────────────────────────────────────────────────────────
+
+    def _tick(self) -> None:
+        if self._active:
+            self._render()
+        elif self._done_at and (time.time() - self._done_at) > 3.0:
+            # Fade out "Done" after 3 s of inactivity
+            self.update("")
+            self._done_at = 0.0
+
+    def _render(self) -> None:
+        elapsed = time.time() - self._start if self._start else 0
+        # Braille pulse while active
+        frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        frame  = frames[int(time.time() * 8) % len(frames)]
+        mins   = int(elapsed) // 60
+        secs   = int(elapsed) % 60
+        timer  = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
+        self.update(Text.assemble(
+            (f" {frame} ", "bold cyan"),
+            (self._action, "bright_white"),
+            ("…", "dim cyan"),
+            (f"  ({timer})", "dim"),
+        ))
+
+
 # ── Main App ───────────────────────────────────────────────────────────────────
 
 class OmniPanel(App):
@@ -423,6 +499,15 @@ class OmniPanel(App):
         background: #0d2020;
         color: #64dcbc;
     }
+
+    ActivityBar {
+        height: 1;
+        background: #04041a;
+        border-top: dashed #1a2a2a;
+        padding: 0 1;
+    }
+
+    /* @@INSERT_CSS@@ */
     """
 
     BINDINGS = [
@@ -538,9 +623,12 @@ class OmniPanel(App):
                 yield SidebarBtn("⚙", "Automation",    "open_n8n",
                                  "n8n workflow builder")
 
+                # @@INSERT_SIDEBAR@@
+
             with Vertical(id="main"):
                 yield RichLog(id="chat_log", auto_scroll=True,
                               markup=False, highlight=False, wrap=True)
+                yield ActivityBar(id="activity_bar")
                 with Horizontal(id="input_row"):
                     yield TextArea(id="chat_input")
                     yield Button("🎤", id="voice_btn", variant="default")
@@ -588,6 +676,7 @@ class OmniPanel(App):
             "task_sysinfo":   lambda: self._write("system_snapshot"),
             "task_save":      lambda: self._write("/save"),
             "task_clear":     lambda: self._write("/clear"),
+            # @@INSERT_ACTION@@
         }.get(action_id, lambda: None)()
 
     # Plain-English label maps
@@ -737,7 +826,23 @@ class OmniPanel(App):
                 s = self._line_buf.strip()
                 if s and not _is_spinner_line(s):
                     log.write(colorize_line(s))
-                    # Track AI response for copy feature
+                    # ── ActivityBar updates ────────────────────────────────
+                    try:
+                        ab = self.query_one("#activity_bar", ActivityBar)
+                        if s.startswith("ai › "):
+                            # First token of AI reply → mark done
+                            ab.done()
+                        elif "⚙" in s:
+                            # Tool call line — extract action name
+                            # Format: "  ⚙ tool_name(args…)" or "⚙ Calling tool_name"
+                            action = s.replace("⚙", "").strip()
+                            # Trim arg parens for display
+                            if "(" in action:
+                                action = action[:action.index("(")].strip()
+                            ab.set_action(action or "Working")
+                    except Exception:
+                        pass
+                    # ── AI copy tracking ───────────────────────────────────
                     if s.startswith("ai › "):
                         self._in_ai_reply   = True
                         self._last_ai_lines = [s[5:]]
@@ -793,6 +898,10 @@ class OmniPanel(App):
             if len(self._history) > HISTORY_MAX:
                 self._history.pop()
         self.query_one("#chat_log", RichLog).write(colorize_line(f"you › {text}"))
+        try:
+            self.query_one("#activity_bar", ActivityBar).start()
+        except Exception:
+            pass
         self._write(text)
 
     def action_history_back(self) -> None:

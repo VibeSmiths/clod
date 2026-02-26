@@ -307,6 +307,7 @@ TOOLS = [
     "ask_llm", "set_api_key", "sandbox_test_function",
     "diagnose_error", "test_tool", "github_search", "fetch_github_file",
     "system_snapshot", "fetch_reddit", "fetch_hackernews", "fetch_pypi", "meta_prompt",
+    "patch_panel", "test_panel", "rollback_panel", "get_panel_source",
     # @@INSERT_TOOL@@
 ]
 
@@ -1647,6 +1648,225 @@ def meta_prompt(goal: str, context: str = "") -> str:
         return f"meta_prompt failed (no API keys + local error): {e}"
 
 
+# ── Panel self-modification tools ──────────────────────────────────────────────
+
+PANEL_PATH = SELF_PATH.parent / "omni-panel.py"
+
+def test_panel() -> str:
+    """Validate omni-panel.py without running it.
+
+    Checks: file exists → AST parse → py_compile → exec-compile →
+            key widget classes present → insertion markers present.
+    Safe to call at any time — read-only, never modifies the file.
+    """
+    import ast as _ast, py_compile as _pyc
+    results: list[str] = []
+
+    if not PANEL_PATH.exists():
+        return f"✗ omni-panel.py not found at {PANEL_PATH}"
+
+    src = PANEL_PATH.read_text()
+    results.append(f"✓ File found ({len(src):,} chars, {src.count(chr(10))} lines)")
+
+    # AST parse
+    try:
+        _ast.parse(src)
+        results.append("✓ AST parse OK")
+    except SyntaxError as e:
+        results.append(f"✗ AST FAILED: {e}")
+        return "\n".join(results)
+
+    # py_compile
+    try:
+        _pyc.compile(str(PANEL_PATH), doraise=True)
+        results.append("✓ py_compile OK")
+    except _pyc.PyCompileError as e:
+        results.append(f"✗ py_compile FAILED: {e}")
+        return "\n".join(results)
+
+    # Exec-compile (catches class-level / decorator errors without running the app)
+    try:
+        compile(src.replace("OmniPanel().run()", "pass"), str(PANEL_PATH), "exec")
+        results.append("✓ Exec-compile OK")
+    except SyntaxError as e:
+        results.append(f"✗ Exec-compile FAILED: {e}")
+
+    # Subprocess py_compile (independent Python process, catches cached-bytecode edge cases)
+    try:
+        r = _sp.run([sys.executable, "-m", "py_compile", str(PANEL_PATH)],
+                    capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            results.append("✓ Subprocess py_compile OK")
+        else:
+            results.append(f"✗ Subprocess compile: {r.stderr.strip()}")
+    except Exception as e:
+        results.append(f"⚠ Subprocess check skipped: {e}")
+
+    # Key widget classes
+    for cls in ["class GPUBar", "class RamBar", "class ModeModelBar",
+                "class SidebarBtn", "class OmniPanel"]:
+        results.append(f"{'✓' if cls in src else '✗ MISSING'} {cls}")
+
+    # Insertion markers
+    for marker in ["@@INSERT_WIDGET@@", "@@INSERT_CSS@@",
+                   "@@INSERT_SIDEBAR@@", "@@INSERT_ACTION@@"]:
+        results.append(f"{'✓' if marker in src else '⚠ missing'} marker {marker}")
+
+    return "\n".join(results)
+
+
+def rollback_panel(backup_name: str = "") -> str:
+    """Restore omni-panel.py from a backup.
+
+    backup_name: filename like 'omni-panel_20260226_133426.py'
+    Leave blank to restore the most recent panel backup.
+    After restoring → click 'Restart Agent' in the sidebar to reload.
+    """
+    import shutil as _sh
+    bak_dir = SELF_PATH.parent / "backups"
+    if not bak_dir.exists():
+        return "No backups directory found."
+    baks = sorted(bak_dir.glob("omni-panel_*.py"))
+    if not baks:
+        return ("No omni-panel backups found.\n"
+                "(omni-ai backups are stored as omni-ai_*.py — use rollback_self for those)")
+    if backup_name:
+        target = bak_dir / backup_name
+        if not target.exists():
+            avail = [b.name for b in baks[-5:]]
+            return f"Backup not found: {backup_name}\nRecent backups: {avail}"
+    else:
+        target = baks[-1]  # most recent
+
+    import shutil as _sh
+    _sh.copy2(target, PANEL_PATH)
+
+    # Git commit the rollback
+    try:
+        _sp.run(["git", "add", "omni-panel.py"], cwd=str(SELF_PATH.parent), capture_output=True)
+        _sp.run(["git", "commit", "-m", f"revert(panel): rollback to {target.name}"],
+                cwd=str(SELF_PATH.parent), capture_output=True)
+    except Exception:
+        pass
+
+    return (f"Panel rolled back to: {target.name}\n"
+            f"→ Click 'Restart Agent' in the sidebar (or type /restart) to reload.")
+
+
+def patch_panel(old_code: str, new_code: str, description: str) -> str:
+    """Surgically edit omni-panel.py with a full safety pipeline.
+
+    USAGE RULES:
+    - old_code must appear EXACTLY ONCE in the file (add more context if ambiguous)
+    - new_code replaces old_code entirely
+    - To INSERT before a marker, include the marker in both old_code and new_code
+      e.g. old_code="# @@INSERT_WIDGET@@"
+           new_code="class MyWidget(Static):\\n    ...\\n\\n# @@INSERT_WIDGET@@"
+    - After success → click 'Restart Agent' to reload the panel
+
+    Safety pipeline:
+    1. Verify old_code exists exactly once
+    2. AST-check new_code (if Python)
+    3. Backup omni-panel.py to backups/omni-panel_TIMESTAMP.py
+    4. Write patched file
+    5. py_compile full file  →  auto-rollback if fail
+    6. Exec-compile check    →  auto-rollback if fail
+    7. Git commit on success
+    """
+    import ast as _ast, py_compile as _pyc, shutil as _sh
+
+    if not PANEL_PATH.exists():
+        return f"omni-panel.py not found at {PANEL_PATH}"
+
+    src = PANEL_PATH.read_text()
+
+    # Verify old_code exists exactly once
+    count = src.count(old_code)
+    if count == 0:
+        # Show a nearby snippet to help debug
+        snippet = old_code[:120].replace("\n", "\\n")
+        return (f"patch_panel: old_code not found in omni-panel.py.\n"
+                f"First 120 chars searched: {snippet!r}\n"
+                f"Tip: copy the text from get_panel_source() to ensure it matches exactly.")
+    if count > 1:
+        return (f"patch_panel: old_code appears {count} times — ambiguous.\n"
+                f"Add more surrounding context to old_code to make it unique.")
+
+    # AST-check new_code if it looks like Python (not CSS/plain text)
+    stripped = new_code.strip()
+    if stripped and stripped[0] not in ("{", ".", "#", "/", " ") or \
+       any(stripped.startswith(kw) for kw in
+           ("def ", "class ", "yield ", "import ", "from ", "async ")):
+        try:
+            _ast.parse(new_code)
+        except SyntaxError as e:
+            return f"patch_panel: new_code syntax error (fix before patching): {e}"
+
+    # Backup
+    ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    bak = SELF_PATH.parent / "backups" / f"omni-panel_{ts}.py"
+    bak.parent.mkdir(parents=True, exist_ok=True)
+    _sh.copy2(PANEL_PATH, bak)
+
+    # Write patch
+    new_src = src.replace(old_code, new_code, 1)
+    PANEL_PATH.write_text(new_src)
+
+    # py_compile check
+    try:
+        _pyc.compile(str(PANEL_PATH), doraise=True)
+    except _pyc.PyCompileError as e:
+        _sh.copy2(bak, PANEL_PATH)
+        return (f"patch_panel: compile failed — auto-rolled back to {bak.name}\n"
+                f"Error: {e}\n"
+                f"Fix the code and try again.")
+
+    # Exec-compile check (catches class-body / decorator errors without running the app)
+    try:
+        compile(new_src.replace("OmniPanel().run()", "pass"), str(PANEL_PATH), "exec")
+    except SyntaxError as e:
+        _sh.copy2(bak, PANEL_PATH)
+        return (f"patch_panel: exec-compile failed — auto-rolled back to {bak.name}\n"
+                f"Error: {e}")
+
+    # Git commit
+    try:
+        _sp.run(["git", "add", "omni-panel.py"], cwd=str(SELF_PATH.parent), capture_output=True)
+        _sp.run(["git", "commit", "-m", f"feat(panel): {description[:72]}"],
+                cwd=str(SELF_PATH.parent), capture_output=True)
+    except Exception:
+        pass
+
+    # Keep only last 20 panel backups
+    panel_baks = sorted((SELF_PATH.parent / "backups").glob("omni-panel_*.py"))
+    for old_bak in panel_baks[:-20]:
+        try:
+            old_bak.unlink()
+        except Exception:
+            pass
+
+    return (f"patch_panel: ✓ success — {description}\n"
+            f"Backup: {bak.name}\n"
+            f"Lines: {src.count(chr(10))} → {new_src.count(chr(10))}\n"
+            f"→ Click 'Restart Agent' in the sidebar to reload the panel.")
+
+
+def get_panel_source(start_line: int = 1, end_line: int = 0) -> str:
+    """Read omni-panel.py source with line numbers.
+
+    start_line / end_line: slice the file (1-indexed, 0 = end of file).
+    Use this before patch_panel to copy exact text for old_code.
+    """
+    if not PANEL_PATH.exists():
+        return f"omni-panel.py not found at {PANEL_PATH}"
+    lines = PANEL_PATH.read_text().splitlines()
+    total = len(lines)
+    s = max(0, start_line - 1)
+    e = total if end_line == 0 else min(end_line, total)
+    numbered = [f"{i+1:4}: {l}" for i, l in enumerate(lines[s:e], start=s)]
+    return f"omni-panel.py lines {s+1}-{e} (total {total}):\n" + "\n".join(numbered)
+
+
 # @@INSERT_FUNCTION@@
 
 TOOL_FN_MAP = {
@@ -1698,6 +1918,10 @@ TOOL_FN_MAP = {
     "fetch_hackernews":       fetch_hackernews,
     "fetch_pypi":             fetch_pypi,
     "meta_prompt":            meta_prompt,
+    "patch_panel":            patch_panel,
+    "test_panel":             test_panel,
+    "rollback_panel":         rollback_panel,
+    "get_panel_source":       get_panel_source,
     # @@INSERT_MAPPING@@
 }
 
@@ -1716,6 +1940,7 @@ _AUTO_TOOLS = frozenset({
     "ask_llm", "set_api_key", "sandbox_test_function",
     "diagnose_error", "test_tool", "github_search", "fetch_github_file",
     "system_snapshot", "fetch_reddit", "fetch_hackernews", "fetch_pypi", "meta_prompt",
+    "test_panel", "get_panel_source",
 })
 
 # Tools that always require confirmation (regardless of mode)
