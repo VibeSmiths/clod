@@ -100,6 +100,19 @@ Creates a GitHub Release tagged `v{version}` with both `clod.exe` and `clod.AppI
 |------|---------|
 | `pyproject.toml` | `black`, `pylint`, `bandit`, `pytest`, `coverage` settings |
 | `requirements-dev.txt` | Dev dependencies: `pytest`, `pytest-cov`, `coverage[toml]`, `bandit[toml]`, `pip-audit`, `responses` |
+| `.github/dependabot.yml` | Automated dependency update PRs (pip + github-actions, weekly on Mondays) |
+
+## Dependabot
+
+Dependabot opens weekly PRs on Mondays for:
+
+| Ecosystem | Scope | Grouping |
+|-----------|-------|---------|
+| `pip` | `requirements.txt` + `requirements-dev.txt` | Dev tools (pytest, black, pylint, bandit, etc.) batched as minor/patch; production deps individual |
+| `github-actions` | `.github/workflows/` | All action version bumps (individual PRs) |
+
+PRs are labelled `dependencies` + ecosystem name for easy filtering.
+The CI pipeline runs automatically on each Dependabot PR (lint, unit tests, build preview EXE).
 
 ---
 
