@@ -70,10 +70,10 @@ Select a pipeline from the **model selector** in OpenWebUI (top of the chat wind
 
 | Pipeline | Stage 1 (Local) | Stage 2 (Claude) | Best for |
 |----------|----------------|------------------|----------|
-| **OmniAI Code Review** | `qwen2.5-coder:32b` | `claude-sonnet` | Code generation, debugging, architecture |
+| **OmniAI Code Review** | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Code generation, debugging, architecture |
 | **OmniAI Reasoning Review** | `deepseek-r1:14b` | `claude-sonnet` | Analysis, planning, research |
 | **OmniAI Chat Assist** | `llama3.1:8b` | `claude-haiku` | General Q&A, writing, conversation |
-| **OmniAI Claude Review** | `qwen2.5-coder:32b` | `claude-sonnet` | Legacy pipeline — same as Code Review |
+| **OmniAI Claude Review** | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Legacy pipeline — same as Code Review |
 
 ### Configuring a Pipeline
 
@@ -166,11 +166,19 @@ It mirrors the Claude CLI experience but routes through Ollama and the pipelines
 
 ### Pipelines
 
+Each pipeline runs a two-stage flow: the local model drafts a response, then Claude
+reviews and improves it. Switching pipeline also switches the underlying local model
+and Claude tier automatically.
+
 | Pipeline | Local model | Claude model | Use for |
 |----------|------------|--------------|---------|
-| `code_review` | `qwen2.5-coder:32b` | `claude-sonnet` | Code gen + senior engineer review |
+| `code_review` | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Code gen + senior engineer review |
 | `reason_review` | `deepseek-r1:14b` | `claude-sonnet` | Chain-of-thought + architect structuring |
 | `chat_assist` | `llama3.1:8b` | `claude-haiku` | Conversational draft + light polish |
+
+> **GPU note:** `qwen2.5-coder:32b-instruct-q4_K_M` requires ~20 GB VRAM.
+> Stop Stable Diffusion before using `code_review` if both are running:
+> `docker-compose stop stable-diffusion`
 
 ### Token Budget & Offline Mode
 
@@ -180,12 +188,27 @@ configurable budget (default: **100,000 tokens**, set `token_budget` in
 
 | Usage | Behaviour |
 |-------|-----------|
-| ≥ 80% | Yellow warning shown after each response |
-| ≥ 95% | Prompt: *"Go offline? [y/N]"* |
-| 100% | Automatically switches to offline mode |
+| ≥ 80% | Yellow warning shown in the header after each response |
+| ≥ 95% | Prompt after each response: *"Budget at 95% — go offline? [y/N]"* |
+| 100% | Automatically switches to offline mode for the rest of the session |
 
-**Offline mode** disables all Claude / LiteLLM calls; every request (including
-pipelines) routes to the local Ollama model. Toggle manually with `/offline`.
+**Offline mode** cuts all Claude / LiteLLM calls for the session:
+
+- Any active pipeline is stripped — only the local Ollama model is used
+- Cloud model aliases (`claude-*`, `gpt-*`, etc.) are transparently redirected
+  to the configured `default_model` on Ollama
+- The REPL prompt changes to `[OFFLINE] clod>` so the state is always visible
+- Token usage counter pauses (no new Claude charges accumulate)
+
+**Manual toggle:**
+
+```
+/offline        # toggle (on → off, off → on)
+/offline on     # force offline
+/offline off    # return to normal (pipelines and Claude calls resume)
+```
+
+Check current token consumption at any time with `/tokens`.
 
 ### Project Indexer
 
