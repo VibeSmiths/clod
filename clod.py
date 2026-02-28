@@ -41,6 +41,46 @@ __version__ = "1.0.0"
 
 CLOUD_MODEL_PREFIXES = ("claude-", "gpt-", "o1-", "o3-", "gemini-", "groq-", "together-")
 
+SONNET_MODEL = "claude-sonnet-4-6"
+
+# Project type detection: (glob_pattern, label).
+# Patterns starting with "*" are passed to Path.glob(); others are exact names.
+PROJECT_SIGNALS: list[tuple[str, str]] = [
+    ("*.csproj",          ".NET/C#"),
+    ("*.sln",             ".NET Solution"),
+    ("package.json",      "Node.js"),
+    ("pyproject.toml",    "Python"),
+    ("setup.py",          "Python"),
+    ("requirements.txt",  "Python"),
+    ("Cargo.toml",        "Rust"),
+    ("go.mod",            "Go"),
+    ("pom.xml",           "Java/Maven"),
+    ("build.gradle",      "Java/Gradle"),
+    ("build.gradle.kts",  "Java/Gradle"),
+    ("CMakeLists.txt",    "C/C++"),
+    ("Makefile",          "Make"),
+    ("Dockerfile",        "Docker"),
+    ("docker-compose.yml","Docker Compose"),
+    ("*.tf",              "Terraform"),
+    (".git",              "Git repo"),
+]
+
+SKIP_DIRS: frozenset[str] = frozenset({
+    ".git", "node_modules", "__pycache__", ".venv", "venv", "env",
+    "bin", "obj", "dist", "build", "target", ".next", ".nuxt",
+    "vendor", ".gradle", ".idea", ".vs", "packages", ".mypy_cache",
+    ".pytest_cache", "coverage",
+})
+
+# Files whose contents are worth reading for project context
+CONTEXT_FILE_PATTERNS = [
+    "package.json", "pyproject.toml", "requirements.txt",
+    "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
+    "docker-compose.yml", "Dockerfile", "README.md",
+    "*.csproj", "*.sln",
+]
+MAX_CONTEXT_CHARS_PER_FILE = 2000
+
 TOOL_DEFINITIONS = [
     {
         "type": "function",
@@ -472,6 +512,213 @@ def stream_openai_compat(
 
     yield {"type": "done", "message": {"role": "assistant", "content": full_content}}
 
+# ── Project Indexer ────────────────────────────────────────────────────────────
+
+_CLAUDE_MD_PROMPT = """\
+Generate a CLAUDE.md file for the software project described below.
+This file is read by AI assistants (like Claude) to understand the project without
+ingesting every source file. Be concise, factual, and specific — do not invent
+details not present in the provided context.
+
+Structure the file with these sections (omit any that don't apply):
+## Overview
+One paragraph: what the project does, primary language, framework.
+
+## Key Files & Directories
+Bulleted list of important paths and what they contain.
+
+## Build & Run
+Exact commands to install dependencies, build, and run.
+
+## Architecture & Conventions
+Important patterns, naming conventions, configuration approach.
+
+## Dependencies
+Key external packages and what they're used for.
+
+Keep the output under 200 lines. Write only the Markdown content — no preamble.
+
+--- PROJECT CONTEXT ---
+{context}
+"""
+
+_README_PROMPT = """\
+Generate a README.md for the software project described below.
+Be concise and practical. Do not invent details not in the provided context.
+
+Include:
+1. Project name as an H1 heading and a one-sentence description
+2. Tech stack (inline text is fine)
+3. Quick-start: install + run commands
+4. Brief architecture/structure overview
+
+{existing_section}
+--- PROJECT CONTEXT ---
+{context}
+"""
+
+
+def _detect_project_types(path: pathlib.Path) -> list[str]:
+    types = []
+    for pattern, label in PROJECT_SIGNALS:
+        if "*" in pattern:
+            if any(True for _ in path.glob(pattern)):
+                types.append(label)
+        else:
+            if (path / pattern).exists():
+                types.append(label)
+    return types
+
+
+def _find_project_roots(root: pathlib.Path) -> list[tuple[pathlib.Path, list[str]]]:
+    results: list[tuple[pathlib.Path, list[str]]] = []
+    for dirpath, dirnames, _ in os.walk(root):
+        p = pathlib.Path(dirpath)
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        types = _detect_project_types(p)
+        if types:
+            results.append((p, types))
+    return results
+
+
+def _gather_context(project_path: pathlib.Path, types: list[str]) -> str:
+    lines = [
+        f"Project path: {project_path}",
+        f"Detected types: {', '.join(types)}",
+        "",
+        "## Directory structure (top 2 levels, filtered)",
+    ]
+    try:
+        for item in sorted(project_path.iterdir()):
+            if item.name in SKIP_DIRS or item.name.startswith("."):
+                continue
+            lines.append(f"  {item.name}{'/' if item.is_dir() else ''}")
+            if item.is_dir():
+                try:
+                    for sub in sorted(item.iterdir())[:12]:
+                        if sub.name not in SKIP_DIRS:
+                            lines.append(f"    {sub.name}{'/' if sub.is_dir() else ''}")
+                except PermissionError:
+                    pass
+    except PermissionError:
+        pass
+
+    lines.append("")
+    lines.append("## Key file contents")
+    for pattern in CONTEXT_FILE_PATTERNS:
+        candidates = (
+            list(project_path.glob(pattern))
+            if "*" in pattern
+            else ([project_path / pattern] if (project_path / pattern).exists() else [])
+        )
+        for fp in candidates[:2]:
+            if fp.is_file():
+                try:
+                    content = fp.read_text(encoding="utf-8", errors="ignore")
+                    if len(content) > MAX_CONTEXT_CHARS_PER_FILE:
+                        content = content[:MAX_CONTEXT_CHARS_PER_FILE] + "\n...(truncated)"
+                    lines.append(f"### {fp.name}")
+                    lines.append(content)
+                    lines.append("")
+                except Exception:
+                    pass
+    return "\n".join(lines)
+
+
+def _call_sonnet(messages: list, cfg: dict) -> str:
+    """Synchronous (non-streaming) call to claude-sonnet via LiteLLM."""
+    try:
+        resp = requests.post(
+            f"{cfg['litellm_url']}/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {cfg['litellm_key']}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": SONNET_MODEL,
+                "messages": messages,
+                "max_tokens": 4096,
+                "stream": False,
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"[error calling claude-sonnet: {e}]"
+
+
+def _write_with_status(path: pathlib.Path, content: str, label: str) -> None:
+    try:
+        path.write_text(content, encoding="utf-8")
+        console.print(f"  [green]wrote[/green] {label} ({len(content)} chars)")
+    except Exception as e:
+        console.print(f"  [red]error writing {label}: {e}[/red]")
+
+
+def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
+    """Walk root, detect project directories, generate CLAUDE.md / update README.md."""
+    console.print(f"\n[bold cyan]Indexing:[/bold cyan] {root}\n")
+    projects = _find_project_roots(root)
+    if not projects:
+        console.print("[yellow]No projects detected.[/yellow]")
+        return
+    console.print(f"[dim]Found {len(projects)} project(s)[/dim]\n")
+
+    for proj_path, types in projects:
+        try:
+            rel = proj_path.relative_to(root)
+        except ValueError:
+            rel = proj_path
+        console.print(Panel(
+            f"[bold]{rel or '.'}[/bold]\n[dim]{', '.join(types)}[/dim]",
+            border_style="cyan",
+            expand=False,
+        ))
+
+        context = _gather_context(proj_path, types)
+
+        # ── CLAUDE.md ──────────────────────────────────────────
+        claude_md = proj_path / "CLAUDE.md"
+        skip_claude = False
+        if claude_md.exists():
+            ans = console.input("  CLAUDE.md exists — overwrite? [y/N] ").strip().lower()
+            skip_claude = ans not in ("y", "yes")
+        if not skip_claude:
+            console.print("  [dim]generating CLAUDE.md via claude-sonnet…[/dim]")
+            content = _call_sonnet(
+                [{"role": "user", "content": _CLAUDE_MD_PROMPT.format(context=context)}],
+                cfg,
+            )
+            _write_with_status(claude_md, content, "CLAUDE.md")
+
+        # ── README.md ──────────────────────────────────────────
+        readme = proj_path / "README.md"
+        existing_readme = ""
+        skip_readme = False
+        if readme.exists():
+            existing_readme = readme.read_text(encoding="utf-8", errors="ignore")
+            if existing_readme.strip():
+                ans = console.input("  README.md exists — update? [y/N] ").strip().lower()
+                skip_readme = ans not in ("y", "yes")
+        if not skip_readme:
+            console.print("  [dim]generating README.md via claude-sonnet…[/dim]")
+            existing_section = (
+                f"Existing README (update or replace as appropriate):\n{existing_readme[:1500]}\n\n"
+                if existing_readme.strip() else ""
+            )
+            content = _call_sonnet(
+                [{"role": "user", "content": _README_PROMPT.format(
+                    context=context,
+                    existing_section=existing_section,
+                )}],
+                cfg,
+            )
+            _write_with_status(readme, content, "README.md")
+
+        console.print()
+
+
 # ── Rich UI Helpers ────────────────────────────────────────────────────────────
 
 console = Console()
@@ -499,11 +746,12 @@ def print_help() -> None:
             "  [yellow]/system [/yellow][dim]<prompt>[/dim]        set system prompt",
             "  [yellow]/clear[/yellow]                   clear conversation history",
             "  [yellow]/save [/yellow][dim]<file>[/dim]            save conversation to JSON",
+            "  [yellow]/index [/yellow][dim][path][/dim]           index projects: generate CLAUDE.md + README",
             "  [yellow]/help[/yellow]                    show this message",
             "  [yellow]/exit[/yellow] or [yellow]/quit[/yellow]            exit clod",
             "",
             "[bold cyan]Pipelines:[/bold cyan]",
-            "  code_review    qwen2.5-coder:32b → claude-sonnet",
+            "  code_review    → claude-sonnet-4-6 (direct, no local stage)",
             "  reason_review  deepseek-r1:14b   → claude-sonnet",
             "  chat_assist    llama3.1:8b       → claude-sonnet",
         ]),
@@ -571,6 +819,14 @@ def infer(
     Run one inference round (may loop for tool calls).
     Returns the final assistant message content.
     """
+    # Code review always goes to claude-sonnet directly via LiteLLM
+    if pipeline == "code_review":
+        gen = stream_openai_compat(
+            messages, SONNET_MODEL, cfg["litellm_url"], cfg["litellm_key"], max_tokens=8192
+        )
+        content, _ = stream_and_render(gen)
+        return content or ""
+
     adapter = pick_adapter(model, pipeline, cfg)
     tools = TOOL_DEFINITIONS if (tools_on and adapter == "ollama") else None
 
@@ -679,6 +935,13 @@ def handle_slash(
         except Exception as e:
             console.print(f"[red]Save error: {e}[/red]")
 
+    elif verb == "/index":
+        path = pathlib.Path(arg).expanduser() if arg else pathlib.Path(".")
+        if not path.is_dir():
+            console.print(f"[red]Not a directory: {path}[/red]")
+        else:
+            run_index_mode(path, session_state["cfg"])
+
     else:
         return False
 
@@ -700,6 +963,7 @@ def run_repl(
         "pipeline": pipeline,
         "tools_on": tools_on,
         "system": system,
+        "cfg": cfg,
     }
 
     messages: list = []
@@ -772,6 +1036,9 @@ def main() -> None:
                         help="Enable tool use (bash, file, web search)")
     parser.add_argument("--no-stream", action="store_true",
                         help="Disable streaming output")
+    parser.add_argument("--index", metavar="PATH", nargs="?", const=".",
+                        help="Index projects under PATH (default: current dir): "
+                             "generate CLAUDE.md and update README.md using claude-sonnet")
     parser.add_argument("--version", action="version", version=f"clod {__version__}")
     args = parser.parse_args()
 
@@ -779,6 +1046,15 @@ def main() -> None:
     pipeline = args.pipeline or cfg.get("pipeline")
     system = args.system
     tools_on = args.tools
+
+    # Index mode
+    if args.index is not None:
+        root = pathlib.Path(args.index).expanduser().resolve()
+        if not root.is_dir():
+            console.print(f"[red]Not a directory: {root}[/red]")
+            sys.exit(1)
+        run_index_mode(root, cfg)
+        return
 
     # One-shot from --print flag
     if args.prompt:
