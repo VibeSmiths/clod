@@ -15,8 +15,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 import clod
 
-
 # ── Config ─────────────────────────────────────────────────────────────────────
+
 
 def test_load_config_returns_defaults(tmp_path, monkeypatch):
     """load_config() returns all expected keys when no config file exists."""
@@ -53,22 +53,27 @@ def test_save_and_reload_config(tmp_path, monkeypatch):
 
 # ── Adapter selection ──────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("model,pipeline,expected", [
-    ("qwen2.5-coder:14b", None, "ollama"),
-    ("deepseek-r1:14b", None, "ollama"),
-    ("claude-sonnet", None, "litellm"),
-    ("gpt-4o", None, "litellm"),
-    ("gemini-flash", None, "litellm"),
-    ("groq-fast", None, "litellm"),
-    ("qwen2.5-coder:14b", "code_review", "pipeline"),
-    ("claude-sonnet", "reason_review", "pipeline"),
-])
+
+@pytest.mark.parametrize(
+    "model,pipeline,expected",
+    [
+        ("qwen2.5-coder:14b", None, "ollama"),
+        ("deepseek-r1:14b", None, "ollama"),
+        ("claude-sonnet", None, "litellm"),
+        ("gpt-4o", None, "litellm"),
+        ("gemini-flash", None, "litellm"),
+        ("groq-fast", None, "litellm"),
+        ("qwen2.5-coder:14b", "code_review", "pipeline"),
+        ("claude-sonnet", "reason_review", "pipeline"),
+    ],
+)
 def test_pick_adapter(model, pipeline, expected):
     cfg = clod.load_config()
     assert clod.pick_adapter(model, pipeline, cfg) == expected
 
 
 # ── Tool executors ─────────────────────────────────────────────────────────────
+
 
 def test_tool_read_file_existing(tmp_path):
     f = tmp_path / "hello.txt"
@@ -107,6 +112,7 @@ def test_tool_write_file_append(tmp_path):
 
 # ── Tool definitions format ────────────────────────────────────────────────────
 
+
 def test_tool_definitions_valid_structure():
     """All tools follow the OpenAI function-calling schema."""
     for tool in clod.TOOL_DEFINITIONS:
@@ -131,6 +137,7 @@ def test_all_tools_have_executors():
 
 # ── Slash command handler ──────────────────────────────────────────────────────
 
+
 def test_slash_clear_empties_messages():
     state = {"model": "qwen2.5-coder:14b", "pipeline": None, "tools_on": False, "system": None}
     messages = [{"role": "user", "content": "hi"}]
@@ -142,7 +149,12 @@ def test_slash_clear_empties_messages():
 
 
 def test_slash_model_updates_state():
-    state = {"model": "qwen2.5-coder:14b", "pipeline": "code_review", "tools_on": False, "system": None}
+    state = {
+        "model": "qwen2.5-coder:14b",
+        "pipeline": "code_review",
+        "tools_on": False,
+        "system": None,
+    }
     messages = []
     clod.console = type("FakeConsole", (), {"print": lambda *a, **k: None})()
     handled = clod.handle_slash("/model deepseek-r1:14b", state, messages)

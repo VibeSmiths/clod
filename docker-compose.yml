@@ -79,6 +79,7 @@ services:
       - "${OPEN_WEBUI_PORT:-8080}:8080"
     environment:
       - AUTOMATIC1111_BASE_URL=http://${SD_HOST:-stable-diffusion}:${SD_WEBUI_PORT:-7860}/
+      - COMFYUI_BASE_URL=http://${COMFYUI_HOST:-comfyui}:${COMFYUI_PORT:-8188}
       - ENABLE_IMAGE_GENERATION=${ENABLE_IMAGE_GENERATION:-True}
       - IMAGE_GENERATION_ENGINE=${IMAGE_GENERATION_ENGINE:-automatic1111}
       - AUTOMATIC1111_API_AUTH=${AUTOMATIC1111_API_AUTH:-}
@@ -232,6 +233,7 @@ services:
   stable-diffusion:
     image: ghcr.io/xander-rudolph/stable-diffusion:latest
     pull_policy: always
+    profiles: ["image"]
     container_name: ${SD_HOST:-stable-diffusion}
     restart: unless-stopped
     environment:
@@ -247,6 +249,34 @@ services:
       - sd_ckpt_models:/data/models/Stable-diffusion:rw
       - sd_lora_models:/data/models/Lora:rw
       - sd_output:/outputs:rw
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: ${GPU_DRIVER:-nvidia}
+              count: all
+              capabilities: [gpu]
+
+  # ── ComfyUI — node-based SD frontend, video generation ───────────────────────
+  # Models go under ${BASE_DIR}/comfyui/models — download CogVideoX, LTX-Video, etc.
+  # Access at localhost:8188.  Switch with /sd video in clod.
+  comfyui:
+    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu124}
+    pull_policy: always
+    profiles: ["video"]
+    container_name: ${COMFYUI_HOST:-comfyui}
+    restart: unless-stopped
+    ports:
+      - "${COMFYUI_PORT:-8188}:8188"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    volumes:
+      - comfyui_models:/root/ComfyUI/models:rw
+      - comfyui_output:/root/ComfyUI/output:rw
+      - comfyui_custom_nodes:/root/ComfyUI/custom_nodes:rw
     deploy:
       resources:
         reservations:
@@ -393,3 +423,21 @@ volumes:
       type: none
       o: bind
       device: "${TTS_CONFIG_DIR}"
+  comfyui_models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${COMFYUI_MODELS_DIR}"
+  comfyui_output:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${COMFYUI_OUTPUT_DIR}"
+  comfyui_custom_nodes:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${COMFYUI_CUSTOM_NODES_DIR}"

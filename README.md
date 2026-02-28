@@ -70,10 +70,10 @@ Select a pipeline from the **model selector** in OpenWebUI (top of the chat wind
 
 | Pipeline | Stage 1 (Local) | Stage 2 (Claude) | Best for |
 |----------|----------------|------------------|----------|
-| **OmniAI Code Review** | `qwen2.5-coder:32b` | `claude-sonnet` | Code generation, debugging, architecture |
+| **OmniAI Code Review** | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Code generation, debugging, architecture |
 | **OmniAI Reasoning Review** | `deepseek-r1:14b` | `claude-sonnet` | Analysis, planning, research |
-| **OmniAI Chat Assist** | `llama3.1:8b` | `claude-sonnet` | General Q&A, writing, conversation |
-| **OmniAI Claude Review** | `qwen2.5-coder:32b` | `claude-sonnet` | Legacy pipeline — same as Code Review |
+| **OmniAI Chat Assist** | `llama3.1:8b` | `claude-haiku` | General Q&A, writing, conversation |
+| **OmniAI Claude Review** | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Legacy pipeline — same as Code Review |
 
 ### Configuring a Pipeline
 
@@ -87,8 +87,10 @@ Select a pipeline from the **model selector** in OpenWebUI (top of the chat wind
 
 ### GPU Note
 
-`qwen2.5-coder:32b` requires ~20 GB VRAM. The RTX 5070 Ti has 24 GB, but Stable
-Diffusion also uses the GPU. **Stop SD before using the 32b code pipeline:**
+`qwen2.5-coder:32b` requires ~20 GB VRAM. The RTX 4070 Ti SUPER has 16 GB, so the
+32b model **will not fit** alongside other GPU workloads and may not fit at all depending
+on CUDA overhead. Use `qwen2.5-coder:14b` (10 GB) as a practical alternative, or stop
+all other GPU processes first. **Stop SD before attempting the 32b pipeline:**
 
 ```bash
 docker-compose stop stable-diffusion
@@ -108,7 +110,7 @@ Pull models with `docker exec -it ollama ollama pull <model>`:
 
 | Model | Tag | Purpose |
 |-------|-----|---------|
-| qwen2.5-coder | `32b-instruct-q4_K_M` | Default code pipeline (24 GB VRAM) |
+| qwen2.5-coder | `32b-instruct-q4_K_M` | Code pipeline (~20 GB VRAM — exceeds 4070 Ti SUPER capacity with overhead) |
 | qwen2.5-coder | `14b` | Lighter code model (10 GB VRAM) |
 | deepseek-r1 | `14b` | Reasoning / chain-of-thought |
 | llama3.1 | `8b` | Fast conversational |
@@ -118,11 +120,126 @@ Pull models with `docker exec -it ollama ollama pull <model>`:
 
 | Alias | Model | Provider |
 |-------|-------|----------|
-| `claude-sonnet` | claude-sonnet-4-6 | Anthropic |
 | `claude-opus` | claude-opus-4-6 | Anthropic |
+| `claude-sonnet` | claude-sonnet-4-6 | Anthropic |
+| `claude-haiku` | claude-haiku-4-5-20251001 | Anthropic |
 | `gpt-4o` | gpt-4o | OpenAI |
 | `groq-fast` | llama-3.3-70b | Groq |
 | `gemini-flash` | gemini-2.0-flash | Google |
+
+---
+
+## clod — Local AI CLI
+
+`clod.exe` (Windows) is a terminal CLI that talks directly to the local Omni stack.
+It mirrors the Claude CLI experience but routes through Ollama and the pipelines service.
+
+### Usage
+
+```powershell
+# Interactive REPL (default model: qwen2.5-coder:14b)
+.\clod.exe
+
+# One-shot prompt
+.\clod.exe -p "explain this error: ..."
+
+# Use a pipeline
+.\clod.exe --pipeline code_review
+
+# Enable tool use (bash, file read/write, web search)
+.\clod.exe --tools
+
+# Index a directory — generate CLAUDE.md + README.md for each project found
+.\clod.exe --index C:\projects
+```
+
+### REPL Commands
+
+| Command | Description |
+|---------|-------------|
+| `/model <name>` | Switch local model (triggers warmup spinner) |
+| `/pipeline <name\|off>` | Switch pipeline or disable |
+| `/offline [on\|off]` | Toggle offline mode — local model only, no Claude calls |
+| `/tokens` | Show session Claude token usage |
+| `/tools [on\|off]` | Toggle tool use |
+| `/index [path]` | Index projects under path |
+| `/clear` | Clear conversation history |
+| `/save <file>` | Save conversation to JSON |
+
+### Pipelines
+
+Each pipeline runs a two-stage flow: the local model drafts a response, then Claude
+reviews and improves it. Switching pipeline also switches the underlying local model
+and Claude tier automatically.
+
+| Pipeline | Local model | Claude model | Use for |
+|----------|------------|--------------|---------|
+| `code_review` | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Code gen + senior engineer review |
+| `reason_review` | `deepseek-r1:14b` | `claude-sonnet` | Chain-of-thought + architect structuring |
+| `chat_assist` | `llama3.1:8b` | `claude-haiku` | Conversational draft + light polish |
+
+> **GPU note:** `qwen2.5-coder:32b-instruct-q4_K_M` requires ~20 GB VRAM. The RTX 4070 Ti
+> SUPER has 16 GB — the 32b model will not fit with CUDA overhead. Use `qwen2.5-coder:14b`
+> (10 GB) for the `code_review` pipeline, or switch `LOCAL_MODEL` in the pipeline valves.
+> If you do attempt 32b: `docker-compose stop stable-diffusion` first to free VRAM.
+
+### Token Budget & Offline Mode
+
+`clod` tracks cumulative Claude API tokens (input + output) per session against a
+configurable budget (default: **100,000 tokens**, set `token_budget` in
+`%APPDATA%\clod\config.json`).
+
+| Usage | Behaviour |
+|-------|-----------|
+| ≥ 80% | Yellow warning shown in the header after each response |
+| ≥ 95% | Prompt after each response: *"Budget at 95% — go offline? [y/N]"* |
+| 100% | Automatically switches to offline mode for the rest of the session |
+
+**Offline mode** cuts all Claude / LiteLLM calls for the session:
+
+- Any active pipeline is stripped — only the local Ollama model is used
+- Cloud model aliases (`claude-*`, `gpt-*`, etc.) are transparently redirected
+  to the configured `default_model` on Ollama
+- The REPL prompt changes to `[OFFLINE] clod>` so the state is always visible
+- Token usage counter pauses (no new Claude charges accumulate)
+
+**Manual toggle:**
+
+```
+/offline        # toggle (on → off, off → on)
+/offline on     # force offline
+/offline off    # return to normal (pipelines and Claude calls resume)
+```
+
+Check current token consumption at any time with `/tokens`.
+
+### Project Indexer
+
+`--index` / `/index` walks a directory tree, detects project roots by the presence
+of language markers (`.csproj`, `package.json`, `Cargo.toml`, `Dockerfile`, etc.),
+and uses the **local model** to generate two files per project:
+
+- **`CLAUDE.md`** — AI-readable context: overview, key files, build commands,
+  architecture, dependencies. Claude reads this instead of ingesting raw source.
+- **`README.md`** — Human-readable: description, tech stack, quick-start.
+
+Skips `node_modules`, `.git`, `dist`, `build`, `vendor`, and other noise dirs.
+
+### Config
+
+`%APPDATA%\clod\config.json` (created automatically with defaults):
+
+```json
+{
+  "ollama_url":    "http://localhost:11434",
+  "litellm_url":   "http://localhost:4000",
+  "litellm_key":   "sk-local-dev",
+  "pipelines_url": "http://localhost:9099",
+  "searxng_url":   "http://localhost:8080",
+  "default_model": "qwen2.5-coder:14b",
+  "token_budget":  100000
+}
+```
 
 ---
 
@@ -207,3 +324,27 @@ docker-compose stop <service>
 docker volume rm omni_<service>_data
 docker-compose up -d <service>
 ```
+
+---
+
+## Screenshots
+
+### Help
+
+![help](screenshots/help.png)
+
+### Header — default
+
+![header default](screenshots/header_default.png)
+
+### Header — pipeline active
+
+![header pipeline](screenshots/header_pipeline.png)
+
+### Header — token budget warning (45%)
+
+![header tokens](screenshots/header_tokens.png)
+
+### Header — offline mode (86% used)
+
+![header offline](screenshots/header_offline.png)

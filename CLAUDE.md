@@ -5,7 +5,7 @@
 - Reason: `deepseek-r1:14b`
 - Vision: `qwen2.5vl:7b`
 - Chat: `llama3.1:8b` (more conversational)
-- Big: `qwen2.5-coder:32b-instruct-q4_K_M` (RTX 5070 Ti has 24GB, can run this)
+- Big: `qwen2.5-coder:32b-instruct-q4_K_M` (~20 GB VRAM — exceeds RTX 4070 Ti SUPER 16 GB, use 14b in practice)
 - Switch with `/model <name>` in REPL
 
 ## Services (Docker)
@@ -16,5 +16,5 @@
 | SearXNG | localhost:8080 | Private search (used by search_web tool) |
 | n8n | localhost:5678 | Automation workflows |
 | ChromaDB | localhost:8000 | Vector memory (semantic_recall tool) |
-| ComfyUI | localhost:8188 | Stable Diffusion image generation |
+| Stable Diffusion (AUTOMATIC1111) | localhost:7860 | Image generation (integrated with Open-WebUI) |
 | Ollama | localhost:11434 | Local LLM inference |

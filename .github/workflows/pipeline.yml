@@ -1,9 +1,10 @@
-name: 🤖 clod Build & Release
+name: CI/CD
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
     inputs:
       version:
@@ -11,35 +12,30 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PACKAGE_NAME: clod
-  PYTHON_VERSION: "3.11"
+permissions:
+  contents: write
+  pull-requests: write
 
-# ── Jobs ───────────────────────────────────────────────────────────────────────
+env:
+  PYTHON_VERSION: "3.11"
 
 jobs:
 
-  # ── Determine version ────────────────────────────────────────────────────────
   versioner:
-    name: 📋 Determine Version
+    name: Determine Version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - id: version
         run: |
-          if [[ -n "${{ inputs.version }}" ]]; then
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            VERSION="pr-${{ github.event.pull_request.number }}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
             VERSION="${{ inputs.version }}"
           else
             VERSION="1.0.${{ github.run_number }}"
@@ -47,140 +43,126 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
 
-  # ── Lint ─────────────────────────────────────────────────────────────────────
   lint:
-    name: 🔍 Lint & Format Check
+    name: Lint & Security
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+      - name: Install linting tools
+        run: pip install black pylint bandit[toml] pip-audit && pip install -r requirements.txt
 
-      - name: Install linters
-        run: pip install pylint black
+      - name: Black — format check
+        run: black --check clod.py tests/
 
-      - name: Install clod runtime deps
-        run: pip install -r requirements.txt
+      - name: Pylint
+        run: pylint clod.py
 
-      - name: black format check
-        run: black --check --line-length 100 clod.py tests/
+      - name: Bandit — security scan (MEDIUM+)
+        run: bandit -c pyproject.toml -r clod.py -ll
 
-      - name: pylint
-        run: |
-          pylint clod.py \
-            --disable=C0114,C0115,C0116 \
-            --max-line-length=100 \
-            --fail-under=7.0
+      - name: pip-audit — dependency CVE scan
+        run: pip-audit -r requirements.txt --progress-spinner=off
+        continue-on-error: true   # surface issues without blocking builds
 
-  # ── Test ─────────────────────────────────────────────────────────────────────
-  test:
-    name: 🧪 Run Tests
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read         # job-level permissions reset workflow-level; re-add for checkout
+      pull-requests: write   # needed to post coverage comment on PRs
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Install dependencies
+      - name: Run unit tests with coverage
         run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-cov
+          pytest tests/unit/ -v --tb=short \
+            --cov=clod \
+            --cov-report=xml \
+            --cov-report=term-missing
 
-      - name: Run tests
-        run: pytest tests/test_clod.py -v --cov=clod --cov-report=xml --cov-report=term-missing
+      - name: Post coverage comment (PR only)
+        if: github.event_name == 'pull_request'
+        uses: MishaKav/pytest-coverage-comment@main
+        with:
+          pytest-xml-coverage-path: ./coverage.xml
+          title: Unit Test Coverage
+          badge-title: Coverage
+          hide-badge: false
+          hide-report: false
+          create-new-comment: false
+          report-only-changed-files: false
 
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
+      - name: Write coverage to job summary (non-PR)
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "## Unit Test Coverage" >> $GITHUB_STEP_SUMMARY
+          python -m coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
+
+      - uses: codecov/codecov-action@v3
         with:
           file: ./coverage.xml
-          flags: clod
+          flags: unit
           fail_ci_if_error: false
 
-  # ── Build Windows EXE ────────────────────────────────────────────────────────
   build-windows:
-    name: 🪟 Build Windows EXE
+    name: Build Windows EXE
     runs-on: windows-latest
-    needs: versioner
+    needs: [versioner, unit-tests]
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-
-      - name: Install dependencies + PyInstaller
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
-
-      - name: Build clod.exe
-        run: |
-          pyinstaller `
-            --onefile `
-            --console `
-            --name clod `
-            clod.py
-
-      - name: Verify binary
-        run: dist\clod.exe --version
-
-      - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt pyinstaller
+      - run: python -m PyInstaller clod.spec --noconfirm
+      - run: dist\clod.exe --version
+      - uses: actions/upload-artifact@v4
         with:
-          name: clod-windows-${{ needs.versioner.outputs.version }}
+          name: ${{ github.event_name == 'pull_request' && format('clod-pr-{0}', github.event.pull_request.number) || format('clod-windows-{0}', needs.versioner.outputs.version) }}
           path: dist/clod.exe
-          retention-days: 5
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
 
-  # ── Build Linux AppImage ──────────────────────────────────────────────────────
   build-linux:
-    name: 🐧 Build Linux AppImage
+    name: Build Linux AppImage
     runs-on: ubuntu-latest
-    needs: versioner
+    needs: [versioner, unit-tests]
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
-
-      - name: Build Linux binary with PyInstaller
-        run: |
+      - run: pip install -r requirements.txt pyinstaller
+      - run: |
           pyinstaller \
             --onefile \
             --console \
             --name clod \
+            --collect-all rich \
             clod.py
-
-      - name: Verify binary
-        run: ./dist/clod --version
-
+      - run: ./dist/clod --version
       - name: Download linuxdeploy
         run: |
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage
-
       - name: Create AppImage
         run: |
           mkdir -p AppDir/usr/bin \
                    AppDir/usr/share/applications \
                    AppDir/usr/share/icons/hicolor/256x256/apps
-
           cp dist/clod AppDir/usr/bin/
-
-          cat > AppDir/usr/share/applications/clod.desktop <<'EOF'
+          cat > AppDir/usr/share/applications/clod.desktop <<'DESKTOP'
           [Desktop Entry]
           Type=Application
           Name=clod
@@ -189,59 +171,129 @@ jobs:
           Icon=clod
           Categories=Development;Utility;
           Terminal=true
-          EOF
-
-          # Placeholder icon (32x32 red square PNG) — replace with real icon later
+          DESKTOP
           python3 -c "
           import struct, zlib
           def png_chunk(name, data):
               c = struct.pack('>I', len(data)) + name + data
               return c + struct.pack('>I', zlib.crc32(c[4:]) & 0xffffffff)
           w, h = 32, 32
-          raw = b'\\x00' + b'\\xff\\x00\\x00\\xff' * w
+          raw = b'\x00' + b'\xff\x00\x00\xff' * w
           compressed = zlib.compress(raw * h)
-          png = b'\\x89PNG\\r\\n\\x1a\\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + png_chunk(b'IDAT', compressed) + png_chunk(b'IEND', b'')
+          png = b'\x89PNG\r\n\x1a\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + png_chunk(b'IDAT', compressed) + png_chunk(b'IEND', b'')
           open('AppDir/usr/share/icons/hicolor/256x256/apps/clod.png', 'wb').write(png)
-          print('icon written')
           "
-
           ARCH=x86_64 ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --executable AppDir/usr/bin/clod \
             --desktop-file AppDir/usr/share/applications/clod.desktop \
             --output appimage
-
           mv clod*.AppImage clod.AppImage 2>/dev/null || mv *clod*.AppImage clod.AppImage
-          ls -lah clod.AppImage
-
-      - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: clod-linux-${{ needs.versioner.outputs.version }}
           path: clod.AppImage
-          retention-days: 5
+          retention-days: 30
 
-  # ── GitHub Release ────────────────────────────────────────────────────────────
-  release:
-    name: 🚀 Create GitHub Release
-    needs: [versioner, build-windows, build-linux]
+  integration-tests:
+    name: Integration Tests
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
+    needs: [versioner, build-windows, build-linux]
+    if: github.event_name != 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run integration tests (clod.py subprocess + test_exe skipped on Linux)
+        run: pytest tests/integration/ -v --tb=short
+      - name: Download Windows EXE (for failure artifact)
+        if: failure()
+        uses: actions/download-artifact@v4
+        with:
+          name: clod-windows-${{ needs.versioner.outputs.version }}
+          path: failed-artifacts/
+      - name: Upload EXE as failure artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clod-integration-failure-${{ github.run_number }}
+          path: failed-artifacts/clod.exe
+          retention-days: 14
 
+  exe-tests:
+    name: EXE Integration Tests (Windows)
+    runs-on: windows-latest
+    needs: [versioner, build-windows]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Download Windows EXE artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event_name == 'pull_request' && format('clod-pr-{0}', github.event.pull_request.number) || format('clod-windows-{0}', needs.versioner.outputs.version) }}
+          path: dist/
+      - name: Run EXE integration tests
+        run: pytest tests/integration/test_exe.py -v --tb=short
+        env:
+          CLOD_EXE: dist\clod.exe
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [versioner, integration-tests, exe-tests]
+    if: github.event_name != 'pull_request' && needs.integration-tests.result == 'success' && needs.exe-tests.result == 'success'
+    steps:
+      - uses: actions/checkout@v6
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts/
-
       - name: Gather release files
         run: |
           mkdir -p release-files
           find release-artifacts -type f \( -name "clod.exe" -o -name "clod.AppImage" \) \
             -exec cp {} release-files/ \;
+          ls -lah release-files/
+
+      - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "${GPG_PRIVATE_KEY}" ]; then
+            echo "::warning::GPG_PRIVATE_KEY secret not set — binaries will not be signed"
+            exit 0
+          fi
+          echo "${GPG_PRIVATE_KEY}" | gpg --batch --import
+          gpg --list-secret-keys
+
+      - name: Sign release binaries
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [ -z "${GPG_PRIVATE_KEY}" ]; then
+            echo "Skipping signing — GPG_PRIVATE_KEY not set"
+            exit 0
+          fi
+          for f in release-files/clod.exe release-files/clod.AppImage; do
+            if [ -f "$f" ]; then
+              echo "Signing ${f}..."
+              gpg --batch --yes \
+                --passphrase "${GPG_PASSPHRASE}" \
+                --pinentry-mode loopback \
+                --detach-sign --armor \
+                "${f}"
+              echo "  -> ${f}.asc created"
+            fi
+          done
+          echo "Release files after signing:"
           ls -lah release-files/
 
       - name: Create Release
@@ -259,9 +311,11 @@ jobs:
             - Interactive REPL with conversation history
             - Tool use: bash execution, file read/write, SearXNG web search
             - Two-stage pipelines: local LLM draft → Claude review
+            - Token budget tracking with offline mode
+            - Project indexer: generates CLAUDE.md + README.md via local model
             - Rich markdown rendering with streaming output
 
-            ### 📥 Downloads
+            ### Downloads
 
             **Windows:**
             ```powershell
@@ -276,19 +330,30 @@ jobs:
             ./clod.AppImage --help
             ```
 
-            Or run directly from the repo:
-            ```bash
-            pip install requests rich prompt_toolkit
-            python clod.py --help
-            ```
-
             ### Usage
             ```
             clod                           # interactive REPL
             clod -p "explain quicksort"    # one-shot
-            clod --pipeline code_review    # local Qwen → Claude review
+            clod --pipeline code_review    # local Qwen -> Claude review
             clod --tools -p "list files"   # with tool use
-            clod --model claude-sonnet     # use cloud model via LiteLLM
+            clod --index C:\projects       # generate CLAUDE.md for all projects
+            ```
+
+            ### Verifying Downloads
+
+            Each binary is signed with GPG. The public key is committed to the
+            repo as `clod-signing-key.asc`.
+
+            **Linux / macOS:**
+            ```bash
+            curl -sL https://raw.githubusercontent.com/${{ github.repository }}/main/clod-signing-key.asc | gpg --import
+            gpg --verify clod.AppImage.asc clod.AppImage
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            gpg --import clod-signing-key.asc
+            gpg --verify clod.exe.asc clod.exe
             ```
 
             ### Info
@@ -297,4 +362,4 @@ jobs:
           files: release-files/*
           generate_release_notes: false
           draft: false
-          prerelease: ${{ github.ref != 'refs/heads/main' }}
+          prerelease: false
