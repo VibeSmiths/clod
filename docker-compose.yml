@@ -125,6 +125,7 @@ services:
     environment:
       - LITELLM_BASE_URL=http://litellm:4000
       - LITELLM_API_KEY=${LITELLM_MASTER_KEY:-sk-local-dev}
+      - PIPELINES_API_KEY=${LITELLM_MASTER_KEY:-sk-local-dev}
       - PIPELINES_DIR=/app/pipelines
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OLLAMA_URL=http://ollama:11434

@@ -63,7 +63,7 @@ jobs:
         run: pip install pylint black
 
       - name: Install clod runtime deps
-        run: pip install -r requirements-clod.txt
+        run: pip install -r requirements.txt
 
       - name: black format check
         run: black --check --line-length 100 clod.py tests/
@@ -89,7 +89,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements-clod.txt
+          pip install -r requirements.txt
           pip install pytest pytest-cov
 
       - name: Run tests
@@ -118,7 +118,7 @@ jobs:
       - name: Install dependencies + PyInstaller
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-clod.txt pyinstaller
+          pip install -r requirements.txt pyinstaller
 
       - name: Build clod.exe
         run: |
@@ -154,7 +154,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-clod.txt pyinstaller
+          pip install -r requirements.txt pyinstaller
 
       - name: Build Linux binary with PyInstaller
         run: |
