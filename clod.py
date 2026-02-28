@@ -256,6 +256,86 @@ def execute_tool(name: str, args: dict, console: Console, cfg: dict) -> str:
     else:
         return f"Unknown tool: {name}"
 
+# ── Ollama Model Management ────────────────────────────────────────────────────
+
+def ollama_local_models(ollama_url: str) -> list[str]:
+    """Return list of model names currently available in Ollama."""
+    try:
+        resp = requests.get(f"{ollama_url}/api/tags", timeout=5)
+        resp.raise_for_status()
+        return [m["name"] for m in resp.json().get("models", [])]
+    except Exception:
+        return []
+
+
+def ollama_model_available(model: str, ollama_url: str) -> bool:
+    """Check if a model (or a tag-normalised match) exists locally."""
+    available = ollama_local_models(ollama_url)
+    # Normalise: "qwen2.5-coder:14b" matches "qwen2.5-coder:14b"
+    # Also match bare name against "name:latest"
+    candidates = {m for m in available} | {m.split(":")[0] for m in available}
+    return model in candidates or f"{model}:latest" in available
+
+
+def ollama_pull(model: str, ollama_url: str) -> None:
+    """
+    Pull a model via the Ollama API with a Rich progress display.
+    Streams NDJSON progress events until complete.
+    """
+    console.print(f"[dim]Pulling [bold]{model}[/bold] from Ollama registry…[/dim]")
+    try:
+        resp = requests.post(
+            f"{ollama_url}/api/pull",
+            json={"name": model, "stream": True},
+            stream=True,
+            timeout=3600,
+        )
+        resp.raise_for_status()
+    except requests.ConnectionError:
+        console.print(f"[red]Cannot connect to Ollama at {ollama_url}[/red]")
+        return
+    except requests.HTTPError as e:
+        console.print(f"[red]Ollama pull error: {e}[/red]")
+        return
+
+    last_status = ""
+    for raw in resp.iter_lines():
+        if not raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        status = event.get("status", "")
+        total = event.get("total", 0)
+        completed = event.get("completed", 0)
+
+        if status != last_status:
+            last_status = status
+            if total and completed:
+                pct = int(completed / total * 100)
+                bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
+                console.print(f"  [cyan][{bar}][/cyan] {pct:3d}%  {status}", end="\r")
+            else:
+                console.print(f"  [dim]{status}[/dim]")
+
+    console.print(f"\n[green]done[/green] [bold]{model}[/bold] ready")
+
+
+def ensure_ollama_model(model: str, cfg: dict) -> bool:
+    """
+    Ensure the given Ollama model is available locally, pulling if needed.
+    Returns True if the model is ready, False if it could not be obtained.
+    """
+    ollama_url = cfg["ollama_url"]
+    if ollama_model_available(model, ollama_url):
+        return True
+    console.print(f"[yellow]Model [bold]{model}[/bold] not found locally.[/yellow]")
+    ollama_pull(model, ollama_url)
+    return ollama_model_available(model, ollama_url)
+
+
 # ── Backend Adapters ───────────────────────────────────────────────────────────
 
 def pick_adapter(model: str, pipeline: Optional[str], cfg: dict) -> str:
@@ -442,7 +522,7 @@ def print_tool_call(name: str, args: dict) -> None:
 
 
 def print_tool_result(name: str, result: str) -> None:
-    preview = result[:500] + ("…" if len(result) > 500 else "")
+    preview = result[:500] + ("..." if len(result) > 500 else "")
     console.print(Panel(
         f"[dim]{preview}[/dim]",
         title=f"[green]result: {name}[/green]",
@@ -493,6 +573,10 @@ def infer(
     """
     adapter = pick_adapter(model, pipeline, cfg)
     tools = TOOL_DEFINITIONS if (tools_on and adapter == "ollama") else None
+
+    # Auto-pull Ollama model if not available locally
+    if adapter == "ollama" and not ensure_ollama_model(model, cfg):
+        return f"Could not obtain model '{model}'. Check Ollama connectivity."
 
     for _ in range(10):  # max tool call rounds
         if adapter == "ollama":
