@@ -72,6 +72,7 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     permissions:
+      contents: read         # job-level permissions reset workflow-level; re-add for checkout
       pull-requests: write   # needed to post coverage comment on PRs
     steps:
       - uses: actions/checkout@v6

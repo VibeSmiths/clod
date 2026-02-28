@@ -108,7 +108,12 @@ Creates a GitHub Release tagged `v{version}` with both `clod.exe` and `clod.AppI
 | Permission | Scope | Used by |
 |------------|-------|---------|
 | `contents: write` | workflow level | `release` job (create GitHub Release) |
+| `contents: read` | `unit-tests` job level | re-declared because any job-level `permissions` block resets all workflow-level permissions to none for that job |
 | `pull-requests: write` | `unit-tests` job level | post coverage comment on PR |
+
+> **GitHub Actions gotcha:** when you define a `permissions` block at the job level,
+> it **replaces** the workflow-level permissions for that job — it does not inherit them.
+> Always re-declare `contents: read` on any job that defines its own permissions and uses `checkout`.
 
 ---
 
