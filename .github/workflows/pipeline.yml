@@ -211,7 +211,7 @@ jobs:
         run: pytest tests/integration/ -v --tb=short
       - name: Download Windows EXE (for failure artifact)
         if: failure()
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: clod-windows-${{ needs.versioner.outputs.version }}
           path: failed-artifacts/
@@ -235,7 +235,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Download Windows EXE artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ github.event_name == 'pull_request' && format('clod-pr-{0}', github.event.pull_request.number) || format('clod-windows-{0}', needs.versioner.outputs.version) }}
           path: dist/
@@ -252,7 +252,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-artifacts/
       - name: Gather release files
