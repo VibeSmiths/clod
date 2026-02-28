@@ -452,29 +452,26 @@ def print_tool_result(name: str, result: str) -> None:
 
 def stream_and_render(event_gen: Generator[dict, None, None]) -> tuple[str, list]:
     """
-    Consume a stream generator, render tokens live, and return
-    (final_content, tool_calls_list).
+    Stream tokens with a live spinner, then render the full response as markdown.
+    Returns (final_content, tool_calls_list).
     """
-    buffer = Text()
     tool_calls = []
-    final_content = ""
+    tokens: list[str] = []
 
-    with Live(buffer, console=console, refresh_per_second=15) as live:
+    # Stream tokens while showing a live status indicator
+    with console.status("[dim]generating…[/dim]", spinner="dots"):
         for event in event_gen:
             if event["type"] == "token":
-                buffer.append(event["text"])
-                live.update(buffer)
-                final_content += event["type"] and event["text"]
+                tokens.append(event["text"])
             elif event["type"] == "tool_call":
                 tool_calls.append(event)
-            elif event["type"] == "done":
-                final_content = event["message"].get("content", final_content)
             elif event["type"] == "error":
-                live.stop()
                 console.print(f"[red]{event['text']}[/red]")
                 return "", []
 
-    # Re-render final content as markdown
+    final_content = "".join(tokens)
+
+    # Render once as markdown
     if final_content:
         console.print()
         console.print(Markdown(final_content))
