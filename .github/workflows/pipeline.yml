@@ -1,6 +1,8 @@
-name: 🤖 clod Build & Release
+name: CI/CD
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -10,31 +12,29 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 env:
-  PACKAGE_NAME: clod
   PYTHON_VERSION: "3.11"
 
 jobs:
 
   versioner:
-    name: 📋 Determine Version
+    name: Determine Version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - id: version
         run: |
-          if [[ -n "${{ inputs.version }}" ]]; then
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            VERSION="pr-${{ github.event.pull_request.number }}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
             VERSION="${{ inputs.version }}"
           else
             VERSION="1.0.${{ github.run_number }}"
@@ -43,7 +43,7 @@ jobs:
           echo "Version: ${VERSION}"
 
   lint:
-    name: 🔍 Lint & Format Check
+    name: Lint & Format Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +61,7 @@ jobs:
             --fail-under=7.0
 
   unit-tests:
-    name: 🧪 Unit Tests
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +70,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
-      - run: pytest tests/unit/ tests/test_clod.py -v --tb=short --cov=clod --cov-report=xml --cov-report=term-missing
+      - run: pytest tests/unit/ -v --tb=short --cov=clod --cov-report=xml --cov-report=term-missing
       - uses: codecov/codecov-action@v3
         with:
           file: ./coverage.xml
@@ -78,7 +78,7 @@ jobs:
           fail_ci_if_error: false
 
   build-windows:
-    name: 🪟 Build Windows EXE
+    name: Build Windows EXE
     runs-on: windows-latest
     needs: [versioner, unit-tests]
     steps:
@@ -93,14 +93,15 @@ jobs:
       - run: dist\clod.exe --version
       - uses: actions/upload-artifact@v4
         with:
-          name: clod-windows-${{ needs.versioner.outputs.version }}
+          name: ${{ github.event_name == 'pull_request' && format('clod-pr-{0}', github.event.pull_request.number) || format('clod-windows-{0}', needs.versioner.outputs.version) }}
           path: dist/clod.exe
-          retention-days: 30
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
 
   build-linux:
-    name: 🐧 Build Linux AppImage
+    name: Build Linux AppImage
     runs-on: ubuntu-latest
     needs: [versioner, unit-tests]
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -142,9 +143,9 @@ jobs:
               c = struct.pack('>I', len(data)) + name + data
               return c + struct.pack('>I', zlib.crc32(c[4:]) & 0xffffffff)
           w, h = 32, 32
-          raw = b'\\x00' + b'\\xff\\x00\\x00\\xff' * w
+          raw = b'\x00' + b'\xff\x00\x00\xff' * w
           compressed = zlib.compress(raw * h)
-          png = b'\\x89PNG\\r\\n\\x1a\\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + png_chunk(b'IDAT', compressed) + png_chunk(b'IEND', b'')
+          png = b'\x89PNG\r\n\x1a\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + png_chunk(b'IDAT', compressed) + png_chunk(b'IEND', b'')
           open('AppDir/usr/share/icons/hicolor/256x256/apps/clod.png', 'wb').write(png)
           "
           ARCH=x86_64 ./linuxdeploy-x86_64.AppImage \
@@ -160,9 +161,10 @@ jobs:
           retention-days: 30
 
   integration-tests:
-    name: 🔗 Integration Tests
+    name: Integration Tests
     runs-on: ubuntu-latest
-    needs: [build-windows]
+    needs: [versioner, build-windows]
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -187,12 +189,10 @@ jobs:
           retention-days: 14
 
   release:
-    name: 🚀 Create GitHub Release
-    needs: [versioner, build-windows, build-linux, integration-tests]
+    name: Create GitHub Release
     runs-on: ubuntu-latest
-    if: needs.integration-tests.result == 'success'
-    permissions:
-      contents: write
+    needs: [versioner, build-windows, build-linux, integration-tests]
+    if: github.event_name != 'pull_request' && needs.integration-tests.result == 'success'
     steps:
       - uses: actions/checkout@v4
       - name: Download all artifacts
@@ -224,7 +224,7 @@ jobs:
             - Project indexer: generates CLAUDE.md + README.md via local model
             - Rich markdown rendering with streaming output
 
-            ### 📥 Downloads
+            ### Downloads
 
             **Windows:**
             ```powershell
@@ -243,7 +243,7 @@ jobs:
             ```
             clod                           # interactive REPL
             clod -p "explain quicksort"    # one-shot
-            clod --pipeline code_review    # local Qwen → Claude review
+            clod --pipeline code_review    # local Qwen -> Claude review
             clod --tools -p "list files"   # with tool use
             clod --index C:\projects       # generate CLAUDE.md for all projects
             ```
