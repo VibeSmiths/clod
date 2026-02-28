@@ -376,6 +376,31 @@ def ensure_ollama_model(model: str, cfg: dict) -> bool:
     return ollama_model_available(model, ollama_url)
 
 
+def warmup_ollama_model(model: str, cfg: dict) -> None:
+    """
+    Send a minimal request to Ollama so the model is loaded into VRAM before
+    the user's first real prompt. Shows a spinner while waiting.
+    Skips silently on any connection error (non-fatal).
+    """
+    with console.status(
+        f"[dim]Loading [bold]{model}[/bold] into memory…[/dim]",
+        spinner="dots",
+    ):
+        try:
+            requests.post(
+                f"{cfg['ollama_url']}/api/chat",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": False,
+                    "options": {"num_predict": 1, "num_ctx": 512},
+                },
+                timeout=120,
+            )
+        except Exception:
+            pass  # warmup failure is non-fatal
+
+
 # ── Backend Adapters ───────────────────────────────────────────────────────────
 
 def pick_adapter(model: str, pipeline: Optional[str], cfg: dict) -> str:
@@ -884,6 +909,8 @@ def handle_slash(
             session_state["model"] = arg
             session_state["pipeline"] = None
             console.print(f"[dim]Model → [bold]{arg}[/bold][/dim]")
+            if not any(arg.startswith(p) for p in CLOUD_MODEL_PREFIXES):
+                warmup_ollama_model(arg, session_state["cfg"])
         else:
             console.print(f"[dim]Current model: [bold]{session_state['model']}[/bold][/dim]")
 

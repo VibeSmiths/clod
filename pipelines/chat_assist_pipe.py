@@ -1,7 +1,7 @@
 """
 OmniAI — Chat Assist Pipeline
 Stage 1: llama3.1:8b (local Ollama)  — fast conversational draft
-Stage 2: claude-sonnet (via LiteLLM) — polish, fact-check, fill gaps
+Stage 2: claude-haiku (via LiteLLM)  — polish, fact-check, fill gaps
 """
 
 import json
@@ -16,7 +16,7 @@ class Pipeline:
 
     class Valves(BaseModel):
         LOCAL_MODEL: str = "llama3.1:8b"
-        CLAUDE_MODEL: str = "claude-sonnet"
+        CLAUDE_MODEL: str = "claude-haiku-4-5-20251001"
         OLLAMA_URL: str = "http://ollama:11434"
         LITELLM_URL: str = "http://litellm:4000"
         LITELLM_API_KEY: str = "sk-local-dev"
