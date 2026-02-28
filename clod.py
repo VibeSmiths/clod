@@ -749,7 +749,7 @@ def print_help() -> None:
             "  [yellow]/exit[/yellow] or [yellow]/quit[/yellow]            exit clod",
             "",
             "[bold cyan]Pipelines:[/bold cyan]",
-            "  code_review    → claude-sonnet-4-6 direct",
+            "  code_review    qwen2.5-coder:32b → claude-sonnet",
             "  reason_review  deepseek-r1:14b   → claude-sonnet",
             "  chat_assist    llama3.1:8b       → claude-sonnet",
         ]),
@@ -817,14 +817,6 @@ def infer(
     Run one inference round (may loop for tool calls).
     Returns the final assistant message content.
     """
-    # Code review always goes to claude-sonnet directly via LiteLLM
-    if pipeline == "code_review":
-        gen = stream_openai_compat(
-            messages, SONNET_MODEL, cfg["litellm_url"], cfg["litellm_key"], max_tokens=8192
-        )
-        content, _ = stream_and_render(gen)
-        return content or ""
-
     adapter = pick_adapter(model, pipeline, cfg)
     tools = TOOL_DEFINITIONS if (tools_on and adapter == "ollama") else None
 
