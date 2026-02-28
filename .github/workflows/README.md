@@ -123,7 +123,12 @@ Dependabot opens weekly PRs on Mondays for:
 | Ecosystem | Scope | Grouping |
 |-----------|-------|---------|
 | `pip` | `requirements.txt` + `requirements-dev.txt` | Dev tools (pytest, black, pylint, bandit, etc.) batched as minor/patch; production deps individual |
+| `docker` | `docker-compose.yml` | All image bumps batched into one weekly PR |
 | `github-actions` | `.github/workflows/` | All action version bumps (individual PRs) |
+
+> **Docker + floating tags:** images using `:latest` or `:main` are pinned to SHA digests
+> (`image: nginx:alpine@sha256:abc…`) and Dependabot updates the digest weekly when the
+> upstream image changes. This makes builds reproducible and surfaces upstream changes as PRs.
 
 PRs are labelled `dependencies` + ecosystem name for easy filtering.
 The CI pipeline runs automatically on each Dependabot PR (lint, unit tests, build preview EXE).
