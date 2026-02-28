@@ -515,12 +515,12 @@ def stream_openai_compat(
 # ── Project Indexer ────────────────────────────────────────────────────────────
 
 _CLAUDE_MD_PROMPT = """\
-Generate a CLAUDE.md file for the software project described below.
-This file is read by AI assistants (like Claude) to understand the project without
-ingesting every source file. Be concise, factual, and specific — do not invent
-details not present in the provided context.
+You are analyzing a software project. Generate a CLAUDE.md file from the project \
+files below. This file will be read by AI assistants to understand the project \
+without needing to ingest every source file. Be concise, factual, and specific — \
+do not invent details not present in the provided files.
 
-Structure the file with these sections (omit any that don't apply):
+Sections to include (omit any that don't apply):
 ## Overview
 One paragraph: what the project does, primary language, framework.
 
@@ -536,15 +536,15 @@ Important patterns, naming conventions, configuration approach.
 ## Dependencies
 Key external packages and what they're used for.
 
-Keep the output under 200 lines. Write only the Markdown content — no preamble.
+Keep the output under 200 lines. Output only the Markdown — no preamble or explanation.
 
---- PROJECT CONTEXT ---
+--- PROJECT FILES ---
 {context}
 """
 
 _README_PROMPT = """\
-Generate a README.md for the software project described below.
-Be concise and practical. Do not invent details not in the provided context.
+You are analyzing a software project. Generate a README.md from the project files \
+below. Be concise and practical. Do not invent details not present in the files.
 
 Include:
 1. Project name as an H1 heading and a one-sentence description
@@ -552,8 +552,8 @@ Include:
 3. Quick-start: install + run commands
 4. Brief architecture/structure overview
 
-{existing_section}
---- PROJECT CONTEXT ---
+{existing_section}\
+--- PROJECT FILES ---
 {context}
 """
 
@@ -625,27 +625,23 @@ def _gather_context(project_path: pathlib.Path, types: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _call_sonnet(messages: list, cfg: dict) -> str:
-    """Synchronous (non-streaming) call to claude-sonnet via LiteLLM."""
+def _call_local(messages: list, cfg: dict) -> str:
+    """Synchronous (non-streaming) call to the local Ollama model."""
     try:
         resp = requests.post(
-            f"{cfg['litellm_url']}/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {cfg['litellm_key']}",
-                "Content-Type": "application/json",
-            },
+            f"{cfg['ollama_url']}/api/chat",
             json={
-                "model": SONNET_MODEL,
+                "model": cfg["default_model"],
                 "messages": messages,
-                "max_tokens": 4096,
                 "stream": False,
+                "options": {"num_ctx": 16384},
             },
-            timeout=120,
+            timeout=300,
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        return resp.json().get("message", {}).get("content", "")
     except Exception as e:
-        return f"[error calling claude-sonnet: {e}]"
+        return f"[error calling local model: {e}]"
 
 
 def _write_with_status(path: pathlib.Path, content: str, label: str) -> None:
@@ -678,6 +674,8 @@ def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
 
         context = _gather_context(proj_path, types)
 
+        model_label = cfg["default_model"]
+
         # ── CLAUDE.md ──────────────────────────────────────────
         claude_md = proj_path / "CLAUDE.md"
         skip_claude = False
@@ -685,8 +683,8 @@ def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
             ans = console.input("  CLAUDE.md exists — overwrite? [y/N] ").strip().lower()
             skip_claude = ans not in ("y", "yes")
         if not skip_claude:
-            console.print("  [dim]generating CLAUDE.md via claude-sonnet…[/dim]")
-            content = _call_sonnet(
+            console.print(f"  [dim]generating CLAUDE.md via {model_label}…[/dim]")
+            content = _call_local(
                 [{"role": "user", "content": _CLAUDE_MD_PROMPT.format(context=context)}],
                 cfg,
             )
@@ -702,12 +700,12 @@ def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
                 ans = console.input("  README.md exists — update? [y/N] ").strip().lower()
                 skip_readme = ans not in ("y", "yes")
         if not skip_readme:
-            console.print("  [dim]generating README.md via claude-sonnet…[/dim]")
+            console.print(f"  [dim]generating README.md via {model_label}…[/dim]")
             existing_section = (
                 f"Existing README (update or replace as appropriate):\n{existing_readme[:1500]}\n\n"
                 if existing_readme.strip() else ""
             )
-            content = _call_sonnet(
+            content = _call_local(
                 [{"role": "user", "content": _README_PROMPT.format(
                     context=context,
                     existing_section=existing_section,
@@ -751,7 +749,7 @@ def print_help() -> None:
             "  [yellow]/exit[/yellow] or [yellow]/quit[/yellow]            exit clod",
             "",
             "[bold cyan]Pipelines:[/bold cyan]",
-            "  code_review    → claude-sonnet-4-6 (direct, no local stage)",
+            "  code_review    → claude-sonnet-4-6 direct",
             "  reason_review  deepseek-r1:14b   → claude-sonnet",
             "  chat_assist    llama3.1:8b       → claude-sonnet",
         ]),
