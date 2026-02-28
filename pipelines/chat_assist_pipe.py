@@ -16,7 +16,7 @@ class Pipeline:
 
     class Valves(BaseModel):
         LOCAL_MODEL: str = "llama3.1:8b"
-        CLAUDE_MODEL: str = "claude-haiku-4-5-20251001"
+        CLAUDE_MODEL: str = "claude-haiku"
         OLLAMA_URL: str = "http://ollama:11434"
         LITELLM_URL: str = "http://litellm:4000"
         LITELLM_API_KEY: str = "sk-local-dev"

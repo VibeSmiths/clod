@@ -43,6 +43,32 @@ CLOUD_MODEL_PREFIXES = ("claude-", "gpt-", "o1-", "o3-", "gemini-", "groq-", "to
 
 SONNET_MODEL = "claude-sonnet-4-6"
 
+# Per-pipeline model assignments — local (Ollama) + Claude (LiteLLM alias).
+# These mirror the Valves defaults in each pipeline .py file and are used here
+# for display, warmup, and token-budget routing.
+PIPELINE_CONFIGS: dict[str, dict] = {
+    "code_review": {
+        "local":       "qwen2.5-coder:32b-instruct-q4_K_M",
+        "claude":      "claude-sonnet",
+        "description": "Code gen → senior-engineer review",
+    },
+    "reason_review": {
+        "local":       "deepseek-r1:14b",
+        "claude":      "claude-sonnet",
+        "description": "Chain-of-thought → architect structuring",
+    },
+    "chat_assist": {
+        "local":       "llama3.1:8b",
+        "claude":      "claude-haiku",
+        "description": "Conversational draft → light polish",
+    },
+}
+
+# Token-budget thresholds (fraction of session budget)
+TOKEN_WARN  = 0.80   # yellow warning
+TOKEN_OFFER = 0.95   # prompt to go offline
+TOKEN_LIMIT = 1.00   # force offline
+
 # Project type detection: (glob_pattern, label).
 # Patterns starting with "*" are passed to Path.glob(); others are exact names.
 PROJECT_SIGNALS: list[tuple[str, str]] = [
@@ -172,6 +198,7 @@ def load_config() -> dict:
         "default_model": "qwen2.5-coder:14b",
         "pipeline": None,
         "enable_tools": False,
+        "token_budget": 100_000,   # session Claude token budget (input + output)
     }
     path = config_path()
     if path.exists():
@@ -742,17 +769,78 @@ def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
         console.print()
 
 
+# ── Token Budget ───────────────────────────────────────────────────────────────
+
+class TokenBudget:
+    """Tracks cumulative Claude API tokens (input + output) for the session."""
+
+    def __init__(self, budget: int) -> None:
+        self.budget = max(1, budget)
+        self.used = 0
+
+    def add(self, input_msgs: list, output_text: str) -> None:
+        in_chars = sum(len(m.get("content") or "") for m in input_msgs
+                       if isinstance(m.get("content"), str))
+        self.used += (in_chars + len(output_text)) // 4
+
+    @property
+    def fraction(self) -> float:
+        return self.used / self.budget
+
+    @property
+    def pct(self) -> int:
+        return min(100, int(self.fraction * 100))
+
+    def bar(self, width: int = 10) -> str:
+        filled = int(self.fraction * width)
+        return "█" * filled + "░" * (width - filled)
+
+    def status_str(self) -> str:
+        return f"{self.bar()} {self.pct}% ({self.used:,}/{self.budget:,} tok)"
+
+
+def check_token_thresholds(budget: TokenBudget, session_state: dict) -> None:
+    """Print warnings and toggle offline mode based on token budget usage."""
+    f = budget.fraction
+    if f >= TOKEN_LIMIT:
+        console.print(
+            f"[bold red]Token budget exhausted ({budget.status_str()}) — "
+            "switching to offline mode.[/bold red]"
+        )
+        session_state["offline"] = True
+    elif f >= TOKEN_OFFER:
+        ans = console.input(
+            f"[bold yellow]⚠ Claude tokens at {budget.pct}% "
+            f"({budget.status_str()}). Go offline? [y/N] [/bold yellow]"
+        ).strip().lower()
+        if ans in ("y", "yes"):
+            session_state["offline"] = True
+            console.print("[dim]Offline mode enabled — using local model only.[/dim]")
+    elif f >= TOKEN_WARN:
+        console.print(
+            f"[yellow]⚠ Claude token usage: {budget.status_str()}[/yellow]"
+        )
+
+
 # ── Rich UI Helpers ────────────────────────────────────────────────────────────
 
 console = Console()
 
 
-def print_header(model: str, pipeline: Optional[str], tools_on: bool) -> None:
+def print_header(
+    model: str,
+    pipeline: Optional[str],
+    tools_on: bool,
+    budget: Optional[TokenBudget] = None,
+    offline: bool = False,
+) -> None:
     active = f"pipeline:{pipeline}" if pipeline else model
     tools_str = "[green]on[/green]" if tools_on else "[dim]off[/dim]"
+    mode_str = "[bold red]OFFLINE[/bold red]" if offline else "[dim]online[/dim]"
+    tok_str = f"  •  tokens: {budget.status_str()}" if budget and budget.used > 0 else ""
     console.print(Panel(
         f"[bold cyan]clod[/bold cyan] [dim]v{__version__}[/dim]  •  "
-        f"[bold]{active}[/bold]  •  tools: {tools_str}\n"
+        f"[bold]{active}[/bold]  •  tools: {tools_str}  •  {mode_str}{tok_str}\n"
         f"[dim]Type [bold]/help[/bold] for commands, [bold]Ctrl+D[/bold] to exit[/dim]",
         border_style="cyan",
         expand=False,
@@ -760,12 +848,18 @@ def print_header(model: str, pipeline: Optional[str], tools_on: bool) -> None:
 
 
 def print_help() -> None:
+    pipeline_rows = "\n".join(
+        f"  {name:<14} {cfg['local']:<36} → {cfg['claude']}"
+        for name, cfg in PIPELINE_CONFIGS.items()
+    )
     console.print(Panel(
         "\n".join([
             "[bold cyan]Slash commands:[/bold cyan]",
             "  [yellow]/model [/yellow][dim]<name>[/dim]          switch model (ollama or litellm alias)",
             "  [yellow]/pipeline [/yellow][dim]<name|off>[/dim]   use a two-stage pipeline",
             "  [yellow]/tools [/yellow][dim][on|off][/dim]         toggle tool use",
+            "  [yellow]/offline [/yellow][dim][on|off][/dim]       toggle offline mode (local only)",
+            "  [yellow]/tokens[/yellow]                  show session Claude token usage",
             "  [yellow]/system [/yellow][dim]<prompt>[/dim]        set system prompt",
             "  [yellow]/clear[/yellow]                   clear conversation history",
             "  [yellow]/save [/yellow][dim]<file>[/dim]            save conversation to JSON",
@@ -773,10 +867,8 @@ def print_help() -> None:
             "  [yellow]/help[/yellow]                    show this message",
             "  [yellow]/exit[/yellow] or [yellow]/quit[/yellow]            exit clod",
             "",
-            "[bold cyan]Pipelines:[/bold cyan]",
-            "  code_review    qwen2.5-coder:32b → claude-sonnet",
-            "  reason_review  deepseek-r1:14b   → claude-sonnet",
-            "  chat_assist    llama3.1:8b       → claude-sonnet",
+            "[bold cyan]Pipelines (local → claude):[/bold cyan]",
+            pipeline_rows,
         ]),
         title="[cyan]help[/cyan]",
         border_style="cyan",
@@ -837,13 +929,24 @@ def infer(
     pipeline: Optional[str],
     cfg: dict,
     tools_on: bool,
+    offline: bool = False,
+    budget: Optional[TokenBudget] = None,
+    session_state: Optional[dict] = None,
 ) -> str:
     """
     Run one inference round (may loop for tool calls).
     Returns the final assistant message content.
     """
+    # Offline: strip pipeline and redirect cloud models to local default
+    if offline:
+        pipeline = None
+        if any(model.startswith(p) for p in CLOUD_MODEL_PREFIXES):
+            model = cfg["default_model"]
+            console.print(f"[dim][offline] using local model: {model}[/dim]")
+
     adapter = pick_adapter(model, pipeline, cfg)
     tools = TOOL_DEFINITIONS if (tools_on and adapter == "ollama") else None
+    uses_claude = adapter in ("litellm", "pipeline")
 
     # Auto-pull Ollama model if not available locally
     if adapter == "ollama" and not ensure_ollama_model(model, cfg):
@@ -858,6 +961,12 @@ def infer(
             gen = stream_openai_compat(messages, pipeline, cfg["pipelines_url"], cfg["litellm_key"])
 
         final_content, tool_calls = stream_and_render(gen)
+
+        # Track Claude token usage after each round
+        if uses_claude and budget is not None:
+            budget.add(messages, final_content or "")
+            if session_state is not None:
+                check_token_thresholds(budget, session_state)
 
         if not tool_calls:
             return final_content
@@ -952,6 +1061,23 @@ def handle_slash(
         except Exception as e:
             console.print(f"[red]Save error: {e}[/red]")
 
+    elif verb == "/offline":
+        if arg.lower() in ("off", "false", "0"):
+            session_state["offline"] = False
+            console.print("[dim]Offline mode [green]disabled[/green] — Claude calls re-enabled.[/dim]")
+        else:
+            session_state["offline"] = True
+            console.print("[dim]Offline mode [red]enabled[/red] — local model only.[/dim]")
+
+    elif verb == "/tokens":
+        budget: TokenBudget = session_state["budget"]
+        if budget.used == 0:
+            console.print("[dim]No Claude tokens used this session.[/dim]")
+        else:
+            console.print(
+                f"[cyan]Claude tokens:[/cyan] {budget.status_str()}"
+            )
+
     elif verb == "/index":
         path = pathlib.Path(arg).expanduser() if arg else pathlib.Path(".")
         if not path.is_dir():
@@ -975,24 +1101,29 @@ def run_repl(
     history_path().parent.mkdir(parents=True, exist_ok=True)
     session = PromptSession(history=FileHistory(str(history_path())))
 
+    budget = TokenBudget(cfg.get("token_budget", 100_000))
+
     session_state = {
         "model": model,
         "pipeline": pipeline,
         "tools_on": tools_on,
         "system": system,
+        "offline": False,
         "cfg": cfg,
+        "budget": budget,
     }
 
     messages: list = []
     if system:
         messages.append({"role": "system", "content": system})
 
-    print_header(model, pipeline, tools_on)
+    print_header(model, pipeline, tools_on, budget, offline=False)
 
     while True:
         try:
             active = session_state.get("pipeline") or session_state["model"]
-            user_input = session.prompt(f"\n[{active}] > ")
+            offline_tag = " [OFFLINE]" if session_state["offline"] else ""
+            user_input = session.prompt(f"\n[{active}{offline_tag}] > ")
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye[/dim]")
             break
@@ -1013,6 +1144,9 @@ def run_repl(
             session_state.get("pipeline"),
             cfg,
             session_state["tools_on"],
+            offline=session_state["offline"],
+            budget=budget,
+            session_state=session_state,
         )
         if reply:
             messages.append({"role": "assistant", "content": reply})

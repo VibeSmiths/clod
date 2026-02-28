@@ -72,7 +72,7 @@ Select a pipeline from the **model selector** in OpenWebUI (top of the chat wind
 |----------|----------------|------------------|----------|
 | **OmniAI Code Review** | `qwen2.5-coder:32b` | `claude-sonnet` | Code generation, debugging, architecture |
 | **OmniAI Reasoning Review** | `deepseek-r1:14b` | `claude-sonnet` | Analysis, planning, research |
-| **OmniAI Chat Assist** | `llama3.1:8b` | `claude-sonnet` | General Q&A, writing, conversation |
+| **OmniAI Chat Assist** | `llama3.1:8b` | `claude-haiku` | General Q&A, writing, conversation |
 | **OmniAI Claude Review** | `qwen2.5-coder:32b` | `claude-sonnet` | Legacy pipeline — same as Code Review |
 
 ### Configuring a Pipeline
@@ -118,11 +118,102 @@ Pull models with `docker exec -it ollama ollama pull <model>`:
 
 | Alias | Model | Provider |
 |-------|-------|----------|
-| `claude-sonnet` | claude-sonnet-4-6 | Anthropic |
 | `claude-opus` | claude-opus-4-6 | Anthropic |
+| `claude-sonnet` | claude-sonnet-4-6 | Anthropic |
+| `claude-haiku` | claude-haiku-4-5-20251001 | Anthropic |
 | `gpt-4o` | gpt-4o | OpenAI |
 | `groq-fast` | llama-3.3-70b | Groq |
 | `gemini-flash` | gemini-2.0-flash | Google |
+
+---
+
+## clod — Local AI CLI
+
+`clod.exe` (Windows) is a terminal CLI that talks directly to the local Omni stack.
+It mirrors the Claude CLI experience but routes through Ollama and the pipelines service.
+
+### Usage
+
+```powershell
+# Interactive REPL (default model: qwen2.5-coder:14b)
+.\clod.exe
+
+# One-shot prompt
+.\clod.exe -p "explain this error: ..."
+
+# Use a pipeline
+.\clod.exe --pipeline code_review
+
+# Enable tool use (bash, file read/write, web search)
+.\clod.exe --tools
+
+# Index a directory — generate CLAUDE.md + README.md for each project found
+.\clod.exe --index C:\projects
+```
+
+### REPL Commands
+
+| Command | Description |
+|---------|-------------|
+| `/model <name>` | Switch local model (triggers warmup spinner) |
+| `/pipeline <name\|off>` | Switch pipeline or disable |
+| `/offline [on\|off]` | Toggle offline mode — local model only, no Claude calls |
+| `/tokens` | Show session Claude token usage |
+| `/tools [on\|off]` | Toggle tool use |
+| `/index [path]` | Index projects under path |
+| `/clear` | Clear conversation history |
+| `/save <file>` | Save conversation to JSON |
+
+### Pipelines
+
+| Pipeline | Local model | Claude model | Use for |
+|----------|------------|--------------|---------|
+| `code_review` | `qwen2.5-coder:32b` | `claude-sonnet` | Code gen + senior engineer review |
+| `reason_review` | `deepseek-r1:14b` | `claude-sonnet` | Chain-of-thought + architect structuring |
+| `chat_assist` | `llama3.1:8b` | `claude-haiku` | Conversational draft + light polish |
+
+### Token Budget & Offline Mode
+
+`clod` tracks cumulative Claude API tokens (input + output) per session against a
+configurable budget (default: **100,000 tokens**, set `token_budget` in
+`%APPDATA%\clod\config.json`).
+
+| Usage | Behaviour |
+|-------|-----------|
+| ≥ 80% | Yellow warning shown after each response |
+| ≥ 95% | Prompt: *"Go offline? [y/N]"* |
+| 100% | Automatically switches to offline mode |
+
+**Offline mode** disables all Claude / LiteLLM calls; every request (including
+pipelines) routes to the local Ollama model. Toggle manually with `/offline`.
+
+### Project Indexer
+
+`--index` / `/index` walks a directory tree, detects project roots by the presence
+of language markers (`.csproj`, `package.json`, `Cargo.toml`, `Dockerfile`, etc.),
+and uses the **local model** to generate two files per project:
+
+- **`CLAUDE.md`** — AI-readable context: overview, key files, build commands,
+  architecture, dependencies. Claude reads this instead of ingesting raw source.
+- **`README.md`** — Human-readable: description, tech stack, quick-start.
+
+Skips `node_modules`, `.git`, `dist`, `build`, `vendor`, and other noise dirs.
+
+### Config
+
+`%APPDATA%\clod\config.json` (created automatically with defaults):
+
+```json
+{
+  "ollama_url":    "http://localhost:11434",
+  "litellm_url":   "http://localhost:4000",
+  "litellm_key":   "sk-local-dev",
+  "pipelines_url": "http://localhost:9099",
+  "searxng_url":   "http://localhost:8080",
+  "default_model": "qwen2.5-coder:14b",
+  "token_budget":  100000
+}
+```
 
 ---
 
