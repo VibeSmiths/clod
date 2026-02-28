@@ -13,7 +13,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))
 
 import pytest
 
-
 # ── Reusable handler factory ───────────────────────────────────────────────────
 
 
@@ -86,9 +85,7 @@ _OLLAMA_CHAT_RESPONSE = json.dumps(
     }
 )
 
-_OLLAMA_TAGS_RESPONSE = json.dumps(
-    {"models": [{"name": "qwen2.5-coder:14b"}]}
-)
+_OLLAMA_TAGS_RESPONSE = json.dumps({"models": [{"name": "qwen2.5-coder:14b"}]})
 
 _OLLAMA_ROUTES = {
     ("POST", "/api/chat"): (200, "application/x-ndjson", _OLLAMA_CHAT_RESPONSE),
@@ -138,7 +135,7 @@ def integration_cfg(mock_ollama_server, mock_litellm_server):
         "litellm_url": mock_litellm_server,
         "litellm_key": "sk-test",
         "pipelines_url": mock_litellm_server,  # reuse litellm mock for pipelines
-        "searxng_url": "http://127.0.0.1:1",   # unused in inference tests
+        "searxng_url": "http://127.0.0.1:1",  # unused in inference tests
         "default_model": "qwen2.5-coder:14b",
         "pipeline": None,
         "enable_tools": False,

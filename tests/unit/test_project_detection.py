@@ -17,7 +17,6 @@ from clod import (
     SKIP_DIRS,
 )
 
-
 # ── _detect_project_types ──────────────────────────────────────────────────────
 
 

@@ -92,7 +92,9 @@ def test_oneshot_against_mock_ollama(mock_ollama_server, tmp_path):
     env = _env_with_config(tmp_path, {"ollama_url": mock_ollama_server})
     result = _run(["-p", "hi"], env=env, timeout=30)
     output = result.stdout + result.stderr
-    assert result.returncode == 0, f"Non-zero exit.\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    assert (
+        result.returncode == 0
+    ), f"Non-zero exit.\nstdout: {result.stdout}\nstderr: {result.stderr}"
     assert len(output.strip()) > 0
 
 
@@ -115,9 +117,9 @@ def test_index_mode_creates_files(mock_ollama_server, tmp_path):
     result = _run(["--index", str(project_dir)], env=env, timeout=60)
 
     # The command should complete without error
-    assert result.returncode == 0, (
-        f"Non-zero exit.\nstdout: {result.stdout}\nstderr: {result.stderr}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"Non-zero exit.\nstdout: {result.stdout}\nstderr: {result.stderr}"
 
     # CLAUDE.md and README.md should have been written
     assert (project_dir / "CLAUDE.md").exists(), "CLAUDE.md was not created"

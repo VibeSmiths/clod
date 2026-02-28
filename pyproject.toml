@@ -1,0 +1,42 @@
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+# ── Pylint ────────────────────────────────────────────────────────────────────
+[tool.pylint.main]
+fail-under = 7.0
+
+[tool.pylint."messages control"]
+# C01xx = missing docstrings  W0212 = protected-access  R0903 = too-few-public-methods
+disable = ["C0114", "C0115", "C0116", "W0212", "R0903"]
+
+[tool.pylint.format]
+max-line-length = 100
+
+# ── Bandit (security) ─────────────────────────────────────────────────────────
+[tool.bandit]
+# Exclude non-production code from security scanning
+exclude_dirs = ["tests", "scripts", "rthooks"]
+# B404 = import subprocess (intentional — clod is a shell executor)
+# B602 = Popen with shell=True  (intentional)
+# B605 = start process with shell (intentional — bash tool runs user commands)
+skips = ["B404", "B602", "B605"]
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["clod"]
+omit = ["tests/*", "scripts/*", "rthooks/*"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "pass",
+]

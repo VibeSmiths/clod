@@ -61,23 +61,21 @@ def test_pipeline_configs_local_models_are_ollama():
     for name, entry in PIPELINE_CONFIGS.items():
         local = entry["local"]
         is_cloud = any(local.startswith(p) for p in CLOUD_MODEL_PREFIXES)
-        assert not is_cloud, (
-            f"Pipeline '{name}' local model '{local}' looks like a cloud model"
-        )
+        assert not is_cloud, f"Pipeline '{name}' local model '{local}' looks like a cloud model"
 
 
 def test_pipeline_configs_claude_models_are_cloud():
     """All pipeline 'claude' values start with 'claude-'."""
     for name, entry in PIPELINE_CONFIGS.items():
-        assert entry["claude"].startswith("claude-"), (
-            f"Pipeline '{name}' claude value '{entry['claude']}' does not start with 'claude-'"
-        )
+        assert entry["claude"].startswith(
+            "claude-"
+        ), f"Pipeline '{name}' claude value '{entry['claude']}' does not start with 'claude-'"
 
 
 def test_cloud_prefixes_coverage():
     """Spot-check that expected cloud prefixes exist in CLOUD_MODEL_PREFIXES."""
     expected = ("claude-", "gpt-", "gemini-", "groq-", "o1-", "o3-", "together-")
     for prefix in expected:
-        assert prefix in CLOUD_MODEL_PREFIXES, (
-            f"Expected cloud prefix '{prefix}' not found in CLOUD_MODEL_PREFIXES"
-        )
+        assert (
+            prefix in CLOUD_MODEL_PREFIXES
+        ), f"Expected cloud prefix '{prefix}' not found in CLOUD_MODEL_PREFIXES"

@@ -43,7 +43,7 @@ jobs:
           echo "Version: ${VERSION}"
 
   lint:
-    name: Lint & Format Check
+    name: Lint & Security
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,18 +51,27 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-      - run: pip install pylint black
-      - run: pip install -r requirements.txt
-      - run: black --check --line-length 100 clod.py tests/
-      - run: |
-          pylint clod.py \
-            --disable=C0114,C0115,C0116 \
-            --max-line-length=100 \
-            --fail-under=7.0
+      - name: Install linting tools
+        run: pip install black pylint bandit[toml] pip-audit && pip install -r requirements.txt
+
+      - name: Black — format check
+        run: black --check clod.py tests/
+
+      - name: Pylint
+        run: pylint clod.py
+
+      - name: Bandit — security scan (MEDIUM+)
+        run: bandit -c pyproject.toml -r clod.py -ll
+
+      - name: pip-audit — dependency CVE scan
+        run: pip-audit -r requirements.txt --progress-spinner=off
+        continue-on-error: true   # surface issues without blocking builds
 
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write   # needed to post coverage comment on PRs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -70,7 +79,32 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
-      - run: pytest tests/unit/ -v --tb=short --cov=clod --cov-report=xml --cov-report=term-missing
+
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/unit/ -v --tb=short \
+            --cov=clod \
+            --cov-report=xml \
+            --cov-report=term-missing
+
+      - name: Post coverage comment (PR only)
+        if: github.event_name == 'pull_request'
+        uses: MishaKav/pytest-coverage-comment@main
+        with:
+          pytest-xml-coverage-path: ./coverage.xml
+          title: Unit Test Coverage
+          badge-title: Coverage
+          hide-badge: false
+          hide-report: false
+          create-new-comment: false
+          report-only-changed-files: false
+
+      - name: Write coverage to job summary (non-PR)
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "## Unit Test Coverage" >> $GITHUB_STEP_SUMMARY
+          python -m coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
+
       - uses: codecov/codecov-action@v3
         with:
           file: ./coverage.xml

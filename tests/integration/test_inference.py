@@ -24,6 +24,7 @@ def _quiet_console(monkeypatch):
 
         def status(self, *a, **k):
             import contextlib
+
             return contextlib.nullcontext()
 
     monkeypatch.setattr(clod, "console", _FakeConsole())

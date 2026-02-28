@@ -11,7 +11,7 @@ Triggers: `pull_request → main`, `push → main`, `workflow_dispatch`
 |-----|:---:|:---:|:---:|
 | `versioner` | `pr-{N}` | `1.0.{run_number}` | override or `1.0.{run_number}` |
 | `lint` | yes | yes | yes |
-| `unit-tests` | yes | yes | yes |
+| `unit-tests` | yes — coverage comment on PR | yes — coverage in job summary | yes |
 | `build-windows` | yes — PR artifact, 7d | yes — release artifact, 30d | yes |
 | `build-linux` | skipped | yes | yes |
 | `integration-tests` | skipped | yes | yes |
@@ -31,13 +31,37 @@ Determines the build version string passed to all downstream jobs via output.
 | `workflow_dispatch` with `version` input | the supplied value |
 | `workflow_dispatch` without input | `1.0.{run_number}` |
 
-### lint
-Runs on every event. Checks:
-- `black --check` (line length 100) on `clod.py` and `tests/`
-- `pylint` on `clod.py` with minimum score 7.0
+### lint — `Lint & Security`
+Runs on every event. Four steps, each independently reported:
+
+| Step | Tool | Config | Fails build? |
+|------|------|--------|:---:|
+| Format check | `black --check` | `[tool.black]` in `pyproject.toml` | yes |
+| Code quality | `pylint clod.py` | `[tool.pylint]` in `pyproject.toml` (min score 7.0) | yes |
+| Security scan | `bandit -ll` (MEDIUM+) | `[tool.bandit]` in `pyproject.toml` | yes |
+| Dependency CVEs | `pip-audit` | n/a | no (`continue-on-error`) |
+
+**Bandit skips** (intentional — clod is a shell executor by design):
+- `B404` — `import subprocess`
+- `B602` — Popen with `shell=True`
+- `B605` — start process with a shell
+
+`pip-audit` uses `continue-on-error: true` so CVEs in transitive dependencies
+surface in logs without blocking releases.
 
 ### unit-tests
-Runs on every event. Executes `tests/unit/` with coverage report uploaded to Codecov.
+Runs on every event. Executes `tests/unit/` with line-level coverage.
+
+**Coverage reporting differs by event:**
+
+| Event | Where coverage goes |
+|-------|-------------------|
+| `pull_request` | PR comment posted by `MishaKav/pytest-coverage-comment` |
+| `push` / `workflow_dispatch` | `$GITHUB_STEP_SUMMARY` (visible in the Actions run summary tab) |
+
+Also uploads `coverage.xml` to Codecov (flags: `unit`).
+
+Requires job-level `permissions: pull-requests: write` for PR comments.
 
 ### build-windows
 Runs after `versioner` + `unit-tests`. Builds `clod.exe` via `clod.spec` (PyInstaller).
@@ -47,7 +71,7 @@ Runs after `versioner` + `unit-tests`. Builds `clod.exe` via `clod.spec` (PyInst
 | `pull_request` | `clod-pr-{number}` | 7 days |
 | `push` / `workflow_dispatch` | `clod-windows-{version}` | 30 days |
 
-Artifact name is set with a single expression — no duplicate upload steps:
+Artifact name set with a single ternary expression — no duplicate upload steps:
 ```yaml
 name: ${{ github.event_name == 'pull_request'
   && format('clod-pr-{0}', github.event.pull_request.number)
@@ -60,6 +84,7 @@ Artifact: `clod-linux-{version}`, retained 30 days.
 
 ### integration-tests
 Skipped on `pull_request`. Runs `tests/integration/` against mock HTTP servers.
+
 On failure: downloads the Windows EXE artifact and re-uploads it as
 `clod-integration-failure-{run_number}` (14-day retention) for debugging.
 
@@ -69,13 +94,21 @@ Creates a GitHub Release tagged `v{version}` with both `clod.exe` and `clod.AppI
 
 ---
 
-## Secrets / Permissions
+## Config Files
 
-| Secret | Used by | Purpose |
-|--------|---------|---------|
-| `GITHUB_TOKEN` (auto) | `release` | Create GitHub Release and upload assets |
+| File | Purpose |
+|------|---------|
+| `pyproject.toml` | `black`, `pylint`, `bandit`, `pytest`, `coverage` settings |
+| `requirements-dev.txt` | Dev dependencies: `pytest`, `pytest-cov`, `coverage[toml]`, `bandit[toml]`, `pip-audit`, `responses` |
 
-`permissions: contents: write` is set at the workflow level for the release job.
+---
+
+## Permissions
+
+| Permission | Scope | Used by |
+|------------|-------|---------|
+| `contents: write` | workflow level | `release` job (create GitHub Release) |
+| `pull-requests: write` | `unit-tests` job level | post coverage comment on PR |
 
 ---
 

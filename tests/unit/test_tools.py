@@ -11,7 +11,6 @@ import pytest
 import clod
 from clod import tool_read_file, tool_write_file, TOOL_DEFINITIONS
 
-
 # ── tool_read_file ─────────────────────────────────────────────────────────────
 
 

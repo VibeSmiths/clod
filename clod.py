@@ -33,7 +33,6 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.text import Text
 
 __version__ = "1.0.0"
 
@@ -48,62 +47,89 @@ SONNET_MODEL = "claude-sonnet-4-6"
 # for display, warmup, and token-budget routing.
 PIPELINE_CONFIGS: dict[str, dict] = {
     "code_review": {
-        "local":       "qwen2.5-coder:32b-instruct-q4_K_M",
-        "claude":      "claude-sonnet",
+        "local": "qwen2.5-coder:32b-instruct-q4_K_M",
+        "claude": "claude-sonnet",
         "description": "Code gen → senior-engineer review",
     },
     "reason_review": {
-        "local":       "deepseek-r1:14b",
-        "claude":      "claude-sonnet",
+        "local": "deepseek-r1:14b",
+        "claude": "claude-sonnet",
         "description": "Chain-of-thought → architect structuring",
     },
     "chat_assist": {
-        "local":       "llama3.1:8b",
-        "claude":      "claude-haiku",
+        "local": "llama3.1:8b",
+        "claude": "claude-haiku",
         "description": "Conversational draft → light polish",
     },
 }
 
 # Token-budget thresholds (fraction of session budget)
-TOKEN_WARN  = 0.80   # yellow warning
-TOKEN_OFFER = 0.95   # prompt to go offline
-TOKEN_LIMIT = 1.00   # force offline
+TOKEN_WARN = 0.80  # yellow warning
+TOKEN_OFFER = 0.95  # prompt to go offline
+TOKEN_LIMIT = 1.00  # force offline
 
 # Project type detection: (glob_pattern, label).
 # Patterns starting with "*" are passed to Path.glob(); others are exact names.
 PROJECT_SIGNALS: list[tuple[str, str]] = [
-    ("*.csproj",          ".NET/C#"),
-    ("*.sln",             ".NET Solution"),
-    ("package.json",      "Node.js"),
-    ("pyproject.toml",    "Python"),
-    ("setup.py",          "Python"),
-    ("requirements.txt",  "Python"),
-    ("Cargo.toml",        "Rust"),
-    ("go.mod",            "Go"),
-    ("pom.xml",           "Java/Maven"),
-    ("build.gradle",      "Java/Gradle"),
-    ("build.gradle.kts",  "Java/Gradle"),
-    ("CMakeLists.txt",    "C/C++"),
-    ("Makefile",          "Make"),
-    ("Dockerfile",        "Docker"),
-    ("docker-compose.yml","Docker Compose"),
-    ("*.tf",              "Terraform"),
-    (".git",              "Git repo"),
+    ("*.csproj", ".NET/C#"),
+    ("*.sln", ".NET Solution"),
+    ("package.json", "Node.js"),
+    ("pyproject.toml", "Python"),
+    ("setup.py", "Python"),
+    ("requirements.txt", "Python"),
+    ("Cargo.toml", "Rust"),
+    ("go.mod", "Go"),
+    ("pom.xml", "Java/Maven"),
+    ("build.gradle", "Java/Gradle"),
+    ("build.gradle.kts", "Java/Gradle"),
+    ("CMakeLists.txt", "C/C++"),
+    ("Makefile", "Make"),
+    ("Dockerfile", "Docker"),
+    ("docker-compose.yml", "Docker Compose"),
+    ("*.tf", "Terraform"),
+    (".git", "Git repo"),
 ]
 
-SKIP_DIRS: frozenset[str] = frozenset({
-    ".git", "node_modules", "__pycache__", ".venv", "venv", "env",
-    "bin", "obj", "dist", "build", "target", ".next", ".nuxt",
-    "vendor", ".gradle", ".idea", ".vs", "packages", ".mypy_cache",
-    ".pytest_cache", "coverage",
-})
+SKIP_DIRS: frozenset[str] = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "env",
+        "bin",
+        "obj",
+        "dist",
+        "build",
+        "target",
+        ".next",
+        ".nuxt",
+        "vendor",
+        ".gradle",
+        ".idea",
+        ".vs",
+        "packages",
+        ".mypy_cache",
+        ".pytest_cache",
+        "coverage",
+    }
+)
 
 # Files whose contents are worth reading for project context
 CONTEXT_FILE_PATTERNS = [
-    "package.json", "pyproject.toml", "requirements.txt",
-    "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
-    "docker-compose.yml", "Dockerfile", "README.md",
-    "*.csproj", "*.sln",
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "docker-compose.yml",
+    "Dockerfile",
+    "README.md",
+    "*.csproj",
+    "*.sln",
 ]
 MAX_CONTEXT_CHARS_PER_FILE = 2000
 
@@ -120,7 +146,10 @@ TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "Shell command to execute"},
-                    "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"},
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default 30)",
+                    },
                 },
                 "required": ["command"],
             },
@@ -151,7 +180,10 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "path": {"type": "string", "description": "File path to write to"},
                     "content": {"type": "string", "description": "Content to write"},
-                    "append": {"type": "boolean", "description": "Append instead of overwrite (default false)"},
+                    "append": {
+                        "type": "boolean",
+                        "description": "Append instead of overwrite (default false)",
+                    },
                 },
                 "required": ["path", "content"],
             },
@@ -166,7 +198,10 @@ TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
-                    "count": {"type": "integer", "description": "Number of results to return (default 5)"},
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of results to return (default 5)",
+                    },
                 },
                 "required": ["query"],
             },
@@ -175,6 +210,7 @@ TOOL_DEFINITIONS = [
 ]
 
 # ── Config ─────────────────────────────────────────────────────────────────────
+
 
 def config_path() -> pathlib.Path:
     if sys.platform == "win32":
@@ -198,7 +234,7 @@ def load_config() -> dict:
         "default_model": "qwen2.5-coder:14b",
         "pipeline": None,
         "enable_tools": False,
-        "token_budget": 100_000,   # session Claude token budget (input + output)
+        "token_budget": 100_000,  # session Claude token budget (input + output)
     }
     path = config_path()
     if path.exists():
@@ -217,16 +253,20 @@ def save_config(cfg: dict) -> None:
     with open(path, "w") as f:
         json.dump(cfg, f, indent=2)
 
+
 # ── Tool Executors ─────────────────────────────────────────────────────────────
+
 
 def tool_bash_exec(args: dict, console: Console) -> str:
     command = args.get("command", "")
     timeout = int(args.get("timeout", 30))
-    console.print(Panel(
-        f"[bold yellow]$ {command}[/bold yellow]",
-        title="[yellow]bash_exec[/yellow]",
-        border_style="yellow",
-    ))
+    console.print(
+        Panel(
+            f"[bold yellow]$ {command}[/bold yellow]",
+            title="[yellow]bash_exec[/yellow]",
+            border_style="yellow",
+        )
+    )
     confirmed = console.input("[yellow]Run this command? [y/N] [/yellow]").strip().lower()
     if confirmed not in ("y", "yes"):
         return "User declined to execute this command."
@@ -323,7 +363,9 @@ def execute_tool(name: str, args: dict, console: Console, cfg: dict) -> str:
     else:
         return f"Unknown tool: {name}"
 
+
 # ── Ollama Model Management ────────────────────────────────────────────────────
+
 
 def ollama_local_models(ollama_url: str) -> list[str]:
     """Return list of model names currently available in Ollama."""
@@ -429,6 +471,7 @@ def warmup_ollama_model(model: str, cfg: dict) -> None:
 
 
 # ── Backend Adapters ───────────────────────────────────────────────────────────
+
 
 def pick_adapter(model: str, pipeline: Optional[str], cfg: dict) -> str:
     """Return adapter type: 'ollama', 'litellm', or 'pipeline'."""
@@ -563,6 +606,7 @@ def stream_openai_compat(
             continue
 
     yield {"type": "done", "message": {"role": "assistant", "content": full_content}}
+
 
 # ── Project Indexer ────────────────────────────────────────────────────────────
 
@@ -718,11 +762,13 @@ def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
             rel = proj_path.relative_to(root)
         except ValueError:
             rel = proj_path
-        console.print(Panel(
-            f"[bold]{rel or '.'}[/bold]\n[dim]{', '.join(types)}[/dim]",
-            border_style="cyan",
-            expand=False,
-        ))
+        console.print(
+            Panel(
+                f"[bold]{rel or '.'}[/bold]\n[dim]{', '.join(types)}[/dim]",
+                border_style="cyan",
+                expand=False,
+            )
+        )
 
         context = _gather_context(proj_path, types)
 
@@ -755,13 +801,19 @@ def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
             console.print(f"  [dim]generating README.md via {model_label}…[/dim]")
             existing_section = (
                 f"Existing README (update or replace as appropriate):\n{existing_readme[:1500]}\n\n"
-                if existing_readme.strip() else ""
+                if existing_readme.strip()
+                else ""
             )
             content = _call_local(
-                [{"role": "user", "content": _README_PROMPT.format(
-                    context=context,
-                    existing_section=existing_section,
-                )}],
+                [
+                    {
+                        "role": "user",
+                        "content": _README_PROMPT.format(
+                            context=context,
+                            existing_section=existing_section,
+                        ),
+                    }
+                ],
                 cfg,
             )
             _write_with_status(readme, content, "README.md")
@@ -771,6 +823,7 @@ def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
 
 # ── Token Budget ───────────────────────────────────────────────────────────────
 
+
 class TokenBudget:
     """Tracks cumulative Claude API tokens (input + output) for the session."""
 
@@ -779,8 +832,9 @@ class TokenBudget:
         self.used = 0
 
     def add(self, input_msgs: list, output_text: str) -> None:
-        in_chars = sum(len(m.get("content") or "") for m in input_msgs
-                       if isinstance(m.get("content"), str))
+        in_chars = sum(
+            len(m.get("content") or "") for m in input_msgs if isinstance(m.get("content"), str)
+        )
         self.used += (in_chars + len(output_text)) // 4
 
     @property
@@ -809,17 +863,19 @@ def check_token_thresholds(budget: TokenBudget, session_state: dict) -> None:
         )
         session_state["offline"] = True
     elif f >= TOKEN_OFFER:
-        ans = console.input(
-            f"[bold yellow]⚠ Claude tokens at {budget.pct}% "
-            f"({budget.status_str()}). Go offline? [y/N] [/bold yellow]"
-        ).strip().lower()
+        ans = (
+            console.input(
+                f"[bold yellow]⚠ Claude tokens at {budget.pct}% "
+                f"({budget.status_str()}). Go offline? [y/N] [/bold yellow]"
+            )
+            .strip()
+            .lower()
+        )
         if ans in ("y", "yes"):
             session_state["offline"] = True
             console.print("[dim]Offline mode enabled — using local model only.[/dim]")
     elif f >= TOKEN_WARN:
-        console.print(
-            f"[yellow]⚠ Claude token usage: {budget.status_str()}[/yellow]"
-        )
+        console.print(f"[yellow]⚠ Claude token usage: {budget.status_str()}[/yellow]")
 
 
 # ── Rich UI Helpers ────────────────────────────────────────────────────────────
@@ -838,13 +894,15 @@ def print_header(
     tools_str = "[green]on[/green]" if tools_on else "[dim]off[/dim]"
     mode_str = "[bold red]OFFLINE[/bold red]" if offline else "[dim]online[/dim]"
     tok_str = f"  •  tokens: {budget.status_str()}" if budget and budget.used > 0 else ""
-    console.print(Panel(
-        f"[bold cyan]clod[/bold cyan] [dim]v{__version__}[/dim]  •  "
-        f"[bold]{active}[/bold]  •  tools: {tools_str}  •  {mode_str}{tok_str}\n"
-        f"[dim]Type [bold]/help[/bold] for commands, [bold]Ctrl+D[/bold] to exit[/dim]",
-        border_style="cyan",
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            f"[bold cyan]clod[/bold cyan] [dim]v{__version__}[/dim]  •  "
+            f"[bold]{active}[/bold]  •  tools: {tools_str}  •  {mode_str}{tok_str}\n"
+            f"[dim]Type [bold]/help[/bold] for commands, [bold]Ctrl+D[/bold] to exit[/dim]",
+            border_style="cyan",
+            expand=False,
+        )
+    )
 
 
 def print_help() -> None:
@@ -852,45 +910,53 @@ def print_help() -> None:
         f"  {name:<14} {cfg['local']:<36} → {cfg['claude']}"
         for name, cfg in PIPELINE_CONFIGS.items()
     )
-    console.print(Panel(
-        "\n".join([
-            "[bold cyan]Slash commands:[/bold cyan]",
-            "  [yellow]/model [/yellow][dim]<name>[/dim]          switch model (ollama or litellm alias)",
-            "  [yellow]/pipeline [/yellow][dim]<name|off>[/dim]   use a two-stage pipeline",
-            "  [yellow]/tools [/yellow][dim][on|off][/dim]         toggle tool use",
-            "  [yellow]/offline [/yellow][dim][on|off][/dim]       toggle offline mode (local only)",
-            "  [yellow]/tokens[/yellow]                  show session Claude token usage",
-            "  [yellow]/system [/yellow][dim]<prompt>[/dim]        set system prompt",
-            "  [yellow]/clear[/yellow]                   clear conversation history",
-            "  [yellow]/save [/yellow][dim]<file>[/dim]            save conversation to JSON",
-            "  [yellow]/index [/yellow][dim][path][/dim]           index projects: generate CLAUDE.md + README",
-            "  [yellow]/help[/yellow]                    show this message",
-            "  [yellow]/exit[/yellow] or [yellow]/quit[/yellow]            exit clod",
-            "",
-            "[bold cyan]Pipelines (local → claude):[/bold cyan]",
-            pipeline_rows,
-        ]),
-        title="[cyan]help[/cyan]",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            "\n".join(
+                [
+                    "[bold cyan]Slash commands:[/bold cyan]",
+                    "  [yellow]/model [/yellow][dim]<name>[/dim]          switch model (ollama or litellm alias)",
+                    "  [yellow]/pipeline [/yellow][dim]<name|off>[/dim]   use a two-stage pipeline",
+                    "  [yellow]/tools [/yellow][dim][on|off][/dim]         toggle tool use",
+                    "  [yellow]/offline [/yellow][dim][on|off][/dim]       toggle offline mode (local only)",
+                    "  [yellow]/tokens[/yellow]                  show session Claude token usage",
+                    "  [yellow]/system [/yellow][dim]<prompt>[/dim]        set system prompt",
+                    "  [yellow]/clear[/yellow]                   clear conversation history",
+                    "  [yellow]/save [/yellow][dim]<file>[/dim]            save conversation to JSON",
+                    "  [yellow]/index [/yellow][dim][path][/dim]           index projects: generate CLAUDE.md + README",
+                    "  [yellow]/help[/yellow]                    show this message",
+                    "  [yellow]/exit[/yellow] or [yellow]/quit[/yellow]            exit clod",
+                    "",
+                    "[bold cyan]Pipelines (local → claude):[/bold cyan]",
+                    pipeline_rows,
+                ]
+            ),
+            title="[cyan]help[/cyan]",
+            border_style="cyan",
+        )
+    )
 
 
 def print_tool_call(name: str, args: dict) -> None:
     args_str = json.dumps(args, indent=2)
-    console.print(Panel(
-        f"[bold]{name}[/bold]\n[dim]{args_str}[/dim]",
-        title="[yellow]tool call[/yellow]",
-        border_style="yellow",
-    ))
+    console.print(
+        Panel(
+            f"[bold]{name}[/bold]\n[dim]{args_str}[/dim]",
+            title="[yellow]tool call[/yellow]",
+            border_style="yellow",
+        )
+    )
 
 
 def print_tool_result(name: str, result: str) -> None:
     preview = result[:500] + ("..." if len(result) > 500 else "")
-    console.print(Panel(
-        f"[dim]{preview}[/dim]",
-        title=f"[green]result: {name}[/green]",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            f"[dim]{preview}[/dim]",
+            title=f"[green]result: {name}[/green]",
+            border_style="green",
+        )
+    )
 
 
 def stream_and_render(event_gen: Generator[dict, None, None]) -> tuple[str, list]:
@@ -921,7 +987,9 @@ def stream_and_render(event_gen: Generator[dict, None, None]) -> tuple[str, list
 
     return final_content, tool_calls
 
+
 # ── Inference Loop ─────────────────────────────────────────────────────────────
+
 
 def infer(
     messages: list,
@@ -979,15 +1047,19 @@ def infer(
             print_tool_call(tc["name"], tc["arguments"])
             result = execute_tool(tc["name"], tc["arguments"], console, cfg)
             print_tool_result(tc["name"], result)
-            messages.append({
-                "role": "tool",
-                "name": tc["name"],
-                "content": result,
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "name": tc["name"],
+                    "content": result,
+                }
+            )
 
     return final_content or ""
 
+
 # ── REPL ───────────────────────────────────────────────────────────────────────
+
 
 def handle_slash(
     cmd: str,
@@ -1064,7 +1136,9 @@ def handle_slash(
     elif verb == "/offline":
         if arg.lower() in ("off", "false", "0"):
             session_state["offline"] = False
-            console.print("[dim]Offline mode [green]disabled[/green] — Claude calls re-enabled.[/dim]")
+            console.print(
+                "[dim]Offline mode [green]disabled[/green] — Claude calls re-enabled.[/dim]"
+            )
         else:
             session_state["offline"] = True
             console.print("[dim]Offline mode [red]enabled[/red] — local model only.[/dim]")
@@ -1074,9 +1148,7 @@ def handle_slash(
         if budget.used == 0:
             console.print("[dim]No Claude tokens used this session.[/dim]")
         else:
-            console.print(
-                f"[cyan]Claude tokens:[/cyan] {budget.status_str()}"
-            )
+            console.print(f"[cyan]Claude tokens:[/cyan] {budget.status_str()}")
 
     elif verb == "/index":
         path = pathlib.Path(arg).expanduser() if arg else pathlib.Path(".")
@@ -1166,7 +1238,9 @@ def run_oneshot(
     messages.append({"role": "user", "content": prompt})
     infer(messages, model, pipeline, cfg, tools_on)
 
+
 # ── Entry Point ────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     cfg = load_config()
@@ -1175,21 +1249,36 @@ def main() -> None:
         prog="clod",
         description="Local Claude CLI using Ollama + OpenWebUI Pipelines",
     )
-    parser.add_argument("-p", "--print", dest="prompt", metavar="PROMPT",
-                        help="One-shot mode: send prompt and exit")
-    parser.add_argument("--model", "-m", default=cfg["default_model"],
-                        help=f"Model name (default: {cfg['default_model']})")
-    parser.add_argument("--pipeline", metavar="NAME",
-                        help="Use a two-stage pipeline (code_review|reason_review|chat_assist)")
-    parser.add_argument("--system", "-s", metavar="PROMPT",
-                        help="System prompt for this session")
-    parser.add_argument("--tools", action="store_true", default=cfg["enable_tools"],
-                        help="Enable tool use (bash, file, web search)")
-    parser.add_argument("--no-stream", action="store_true",
-                        help="Disable streaming output")
-    parser.add_argument("--index", metavar="PATH", nargs="?", const=".",
-                        help="Index projects under PATH (default: current dir): "
-                             "generate CLAUDE.md and update README.md using claude-sonnet")
+    parser.add_argument(
+        "-p", "--print", dest="prompt", metavar="PROMPT", help="One-shot mode: send prompt and exit"
+    )
+    parser.add_argument(
+        "--model",
+        "-m",
+        default=cfg["default_model"],
+        help=f"Model name (default: {cfg['default_model']})",
+    )
+    parser.add_argument(
+        "--pipeline",
+        metavar="NAME",
+        help="Use a two-stage pipeline (code_review|reason_review|chat_assist)",
+    )
+    parser.add_argument("--system", "-s", metavar="PROMPT", help="System prompt for this session")
+    parser.add_argument(
+        "--tools",
+        action="store_true",
+        default=cfg["enable_tools"],
+        help="Enable tool use (bash, file, web search)",
+    )
+    parser.add_argument("--no-stream", action="store_true", help="Disable streaming output")
+    parser.add_argument(
+        "--index",
+        metavar="PATH",
+        nargs="?",
+        const=".",
+        help="Index projects under PATH (default: current dir): "
+        "generate CLAUDE.md and update README.md using claude-sonnet",
+    )
     parser.add_argument("--version", action="version", version=f"clod {__version__}")
     args = parser.parse_args()
 
