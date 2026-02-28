@@ -305,7 +305,7 @@ jobs:
             ## clod — Local Claude CLI using Ollama + Pipelines
 
             A terminal CLI that mimics the Claude CLI UX but runs against your
-            local [Omni AI stack](https://github.com/${{ github.repository }}).
+            local [AI stack](https://github.com/${{ github.repository }}).
 
             ### Features
             - Interactive REPL with conversation history

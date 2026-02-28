@@ -1,5 +1,5 @@
 """
-OmniAI — Chat Assist Pipeline
+AI — Chat Assist Pipeline
 Stage 1: llama3.1:8b (local Ollama)  — fast conversational draft
 Stage 2: claude-haiku (via LiteLLM)  — polish, fact-check, fill gaps
 """
@@ -33,7 +33,7 @@ class Pipeline:
         )
 
     def __init__(self):
-        self.name = "OmniAI Chat Assist"
+        self.name = "AI Chat Assist"
         self.type = "pipe"
         self.id = "chat_assist"
         self.valves = self.Valves(

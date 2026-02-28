@@ -1,8 +1,8 @@
 # LiteLLM unified gateway config
 # Docs: https://docs.litellm.ai/docs/proxy/configs
 #
-# All API keys live here (injected from .env) — OmniAI never sees them.
-# OmniAI calls http://localhost:4000 using standard OpenAI format.
+# All API keys live here (injected from .env) — AI never sees them.
+# AI calls http://localhost:4000 using standard OpenAI format.
 
 model_list:
 
@@ -107,7 +107,7 @@ litellm_settings:
   request_timeout: 120
 
 general_settings:
-  # Master key — OmniAI uses this to authenticate to LiteLLM
+  # Master key — AI uses this to authenticate to LiteLLM
   # Set LITELLM_MASTER_KEY in .env
   master_key: os.environ/LITELLM_MASTER_KEY
 

@@ -2,7 +2,7 @@
 """
 clod — Local Claude CLI using Ollama + OpenWebUI Pipelines
 
-Mimics the Claude CLI UX but runs entirely against the local Omni stack:
+Mimics the Claude CLI UX but runs entirely against the local stack:
   • Ollama         for local LLM inference (direct streaming)
   • LiteLLM        for cloud models (claude-sonnet, gpt-4o, etc.)
   • Pipelines      for two-stage local→Claude review flows
