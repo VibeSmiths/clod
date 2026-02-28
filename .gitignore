@@ -1,0 +1,6 @@
+.env
+.claude/
+pipelines/__pycache__/
+pipelines/failed/
+pipelines/*/__init__.py
+pipelines/*/valves.json

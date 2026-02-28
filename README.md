@@ -1,258 +1,209 @@
-# OmniAI
+# Omni — Local AI Stack
 
-Autonomous local AI vibecoder — runs entirely on your machine.
-Routes tasks to local LLMs via Ollama, executes shell commands, writes/edits code,
-searches the web, generates images via ComfyUI, manages its own memory, and can
-**add new tools to itself**.
+A self-hosted, GPU-accelerated AI stack built on Docker. Local LLMs handle initial
+drafts via Ollama; Claude (via LiteLLM gateway) provides final review and improvement.
+All services are accessible through a single nginx reverse proxy on port 80.
 
-**Stack:** CachyOS Linux · RTX 5070 Ti · Ollama · qwen2.5-coder:32b
+---
+
+## Prerequisites
+
+- **Docker Desktop** (Windows) with the **WSL2 backend** enabled
+- **NVIDIA Container Toolkit** — for GPU passthrough to Ollama, Stable Diffusion, TTS
+- A `.env` file in this directory (copy `.env.example` or see [Environment Setup](#environment-setup))
+- An **Anthropic API key** for the Claude review pipelines
 
 ---
 
 ## Quick Start
 
-### Full TUI (recommended)
-
 ```bash
-# Double-click the desktop shortcut, or:
-~/Desktop/OmniAI.desktop
-```
+# Start the full stack
+docker-compose up -d
 
-### CLI from any terminal
+# Stop everything (data is preserved)
+docker-compose down
 
-```bash
-ai "build me a FastAPI server"   # single task
-ai                                # interactive REPL
+# Restart a single service (e.g. after editing a pipeline)
+docker-compose restart pipelines
+
+# Pull a new Ollama model
+docker exec -it ollama ollama pull qwen2.5-coder:14b
+
+# View logs for a service
+docker-compose logs -f pipelines
+docker-compose logs -f litellm
 ```
 
 ---
 
-## Docker
+## Service URLs
 
-### Prerequisites
+All services are available through nginx on **port 80** (the paths below), and also
+on their direct ports for cases where UI assets break at subpaths.
 
-- Docker + Docker Compose installed
-- [Ollama](https://ollama.ai) running on the host (`ollama serve`)
-- An Anthropic API key for the Claude review pipeline (optional but recommended)
+| Service | Nginx Path | Direct Port | Notes |
+|---------|-----------|-------------|-------|
+| **OpenWebUI** | `http://localhost/` | `localhost:8081` | Main chat UI — full UI at root |
+| **LiteLLM** | `http://localhost/litellm/` | `localhost:4000` | LLM API gateway + budget UI |
+| **Pipelines** | `http://localhost/pipelines/` | `localhost:9099` | Pipeline API |
+| **Ollama** | `http://localhost/ollama/` | `localhost:11434` | Local LLM inference API |
+| **ChromaDB** | `http://localhost/chroma/` | `localhost:8000` | Vector database API |
+| **SearXNG** | `http://localhost/search/` | `localhost:8080` | Private meta-search |
+| **n8n** | `http://localhost/n8n/` | `localhost:5678` | Automation workflows |
+| **Stable Diffusion** | `http://localhost/sd/` | `localhost:7860` | Image generation |
+| **Perplexica** | `http://localhost/perplexica/` | `localhost:3000` | AI-powered web search |
 
-### Build the OmniAI agent image
-
-```bash
-cd ~/omni-stack
-docker build -t omni-stack .
-```
-
-### Run — interactive REPL
-
-```bash
-docker run -it --rm \
-  --add-host=host.docker.internal:host-gateway \
-  -e OLLAMA_URL=http://host.docker.internal:11434 \
-  -v ~/.omni_ai:/root/.omni_ai \
-  -v ~/omni-stack/backups:/app/backups \
-  omni-stack
-```
-
-### Run — single command
-
-```bash
-docker run --rm \
-  --add-host=host.docker.internal:host-gateway \
-  -e OLLAMA_URL=http://host.docker.internal:11434 \
-  -v ~/.omni_ai:/root/.omni_ai \
-  omni-stack "explain this codebase"
-```
-
-### Run — connected to the full stack (services also in Docker)
-
-```bash
-# Start services first
-docker compose up -d
-
-# Run agent on the same network
-docker run -it --rm \
-  --network=host \
-  -e OLLAMA_URL=http://localhost:11434 \
-  -v ~/.omni_ai:/root/.omni_ai \
-  -v ~/omni-stack/backups:/app/backups \
-  omni-stack
-```
-
-### Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `OLLAMA_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
-| `SEARXNG_URL` | `http://searxng:8080` | SearXNG search endpoint |
-| `CHROMA_URL` | `http://chroma:8000` | ChromaDB vector store |
-| `PIPELINES_URL` | `http://omni-pipelines:9099` | Claude review pipeline API |
-
-### Persistent volumes
-
-| Mount | Purpose |
-|---|---|
-| `~/.omni_ai:/root/.omni_ai` | Memory, sessions, API keys |
-| `~/omni-stack/backups:/app/backups` | Self-improvement backups |
+> **UI note:** Services at subpaths (SearXNG, n8n, SD, Perplexica) may have broken
+> CSS/assets because their frontends serve static files at absolute paths. Use the
+> direct port links above for the full UI experience. API endpoints always work at
+> the nginx path.
 
 ---
 
-## Services Stack
+## Pipelines (Local LLM → Claude)
 
-### Base stack (no GPU required)
+Pipelines appear as selectable models in OpenWebUI. Each runs a two-stage flow:
+a local Ollama model drafts a response, then Claude reviews and improves it.
 
-```bash
-cd ~/omni-stack
-docker compose up -d      # start
-docker compose down       # stop
-docker compose logs -f    # watch logs
-```
+Select a pipeline from the **model selector** in OpenWebUI (top of the chat window).
 
-| Service | URL | Purpose |
-|---|---|---|
-| **omni-pipelines** | localhost:9099 | Claude review + multi-LLM routing |
-| **Perplexica** | localhost:3000 | AI-powered web search |
-| **SearXNG** | localhost:8080 | Private search (used by search_web tool) |
-| **n8n** | localhost:5678 | Automation workflows |
-| **ChromaDB** | localhost:8000 | Vector memory (semantic_recall tool) |
+| Pipeline | Stage 1 (Local) | Stage 2 (Claude) | Best for |
+|----------|----------------|------------------|----------|
+| **OmniAI Code Review** | `qwen2.5-coder:32b` | `claude-sonnet` | Code generation, debugging, architecture |
+| **OmniAI Reasoning Review** | `deepseek-r1:14b` | `claude-sonnet` | Analysis, planning, research |
+| **OmniAI Chat Assist** | `llama3.1:8b` | `claude-sonnet` | General Q&A, writing, conversation |
+| **OmniAI Claude Review** | `qwen2.5-coder:32b` | `claude-sonnet` | Legacy pipeline — same as Code Review |
 
-### Full stack — Ollama + ComfyUI in Docker (`docker-compose.local.yml`)
+### Configuring a Pipeline
 
-Containerises the two services that normally run as host processes.
-Bind-mounts your existing model directories — **no re-downloading needed**.
+1. Go to **Admin Panel → Pipelines** in OpenWebUI
+2. Click the gear icon next to a pipeline to open **Valves**
+3. Adjustable settings per pipeline:
+   - `LOCAL_MODEL` — which Ollama model to use for stage 1
+   - `CLAUDE_MODEL` — `claude-sonnet` or `claude-opus` (via LiteLLM alias)
+   - `SKIP_LOCAL` — set to `"true"` to skip local draft and call Claude directly
+   - `REVIEW_SYSTEM` — customize Claude's review instructions
 
-#### Prerequisites
+### GPU Note
 
-```bash
-# 1. Install nvidia-container-toolkit (required for GPU in Docker)
-sudo pacman -S nvidia-container-toolkit      # CachyOS / Arch
-# sudo apt-get install -y nvidia-container-toolkit   # Ubuntu
-
-# 2. Restart Docker daemon
-sudo systemctl restart docker
-
-# 3. Stop the host services (frees ports 11434 and 8188)
-sudo systemctl stop ollama
-# Kill any running ComfyUI terminal process
-```
-
-#### Build ComfyUI image (first time only)
+`qwen2.5-coder:32b` requires ~20 GB VRAM. The RTX 5070 Ti has 24 GB, but Stable
+Diffusion also uses the GPU. **Stop SD before using the 32b code pipeline:**
 
 ```bash
-docker compose -f docker-compose.local.yml build comfyui
+docker-compose stop stable-diffusion
+# ... use Code Review pipeline ...
+docker-compose start stable-diffusion
 ```
-
-#### Run GPU services only
-
-```bash
-docker compose -f docker-compose.local.yml up -d
-```
-
-#### Run everything in Docker (recommended when doing full containerised deploy)
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
-```
-
-#### Stop everything
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml down
-```
-
-| Service | URL | Purpose |
-|---|---|---|
-| **ollama** | localhost:11434 | Local LLM inference (GPU) |
-| **comfyui** | localhost:8188 | Stable Diffusion image generation (GPU) |
-| **omni-pipelines** | localhost:9099 | Claude review pipeline |
-| **Perplexica** | localhost:3000 | AI-powered web search |
-| **SearXNG** | localhost:8080 | Private search |
-| **n8n** | localhost:5678 | Automation workflows |
-| **ChromaDB** | localhost:8000 | Vector memory |
-
-> **RTX 5070 Ti note:** The ComfyUI image uses `nvidia/cuda:12.6.3` + PyTorch cu126 wheels.
-> Driver 590+ (Blackwell) is fully supported. If you hit CUDA errors, rebuild with `--no-cache`
-> after updating your nvidia-container-toolkit.
 
 ---
 
-## Claude Review Pipeline
+## Available Models
 
-The `omni-pipelines` service runs the Claude review pipe automatically.
+Models are served by Ollama and the LiteLLM gateway.
 
-**What it does:** After OmniAI finishes a local Ollama iteration, the pipeline
-sends the draft to Claude which reviews it for bugs, improves formatting, and
-appends a next-steps plan before returning the final response.
+### Local (Ollama)
 
-### Setup
+Pull models with `docker exec -it ollama ollama pull <model>`:
 
-1. Add your Anthropic API key to `.env`:
+| Model | Tag | Purpose |
+|-------|-----|---------|
+| qwen2.5-coder | `32b-instruct-q4_K_M` | Default code pipeline (24 GB VRAM) |
+| qwen2.5-coder | `14b` | Lighter code model (10 GB VRAM) |
+| deepseek-r1 | `14b` | Reasoning / chain-of-thought |
+| llama3.1 | `8b` | Fast conversational |
+| qwen2.5vl | `7b` | Vision (image understanding) |
+
+### Cloud (via LiteLLM — requires API keys in `.env`)
+
+| Alias | Model | Provider |
+|-------|-------|----------|
+| `claude-sonnet` | claude-sonnet-4-6 | Anthropic |
+| `claude-opus` | claude-opus-4-6 | Anthropic |
+| `gpt-4o` | gpt-4o | OpenAI |
+| `groq-fast` | llama-3.3-70b | Groq |
+| `gemini-flash` | gemini-2.0-flash | Google |
+
+---
+
+## Environment Setup
+
+Create a `.env` file (or edit the existing one) with the following required values:
 
 ```bash
-# ~/omni-stack/.env
+# API Keys — cloud models won't work without these
 ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...        # optional
+GROQ_API_KEY=gsk_...         # optional
+GEMINI_API_KEY=...           # optional
+TOGETHER_API_KEY=...         # optional
+
+# LiteLLM auth key — used by pipelines and OpenWebUI
+LITELLM_MASTER_KEY=sk-local-dev
+
+# Ports (defaults shown — only set to override)
+OPEN_WEBUI_PORT=8081
+NGINX_ROOT_PORT=80
+
+# Data storage root (all service data goes here)
+BASE_DIR=${USERPROFILE}/docker-dependencies
 ```
-
-2. Restart the stack:
-
-```bash
-docker compose up -d omni-pipelines
-```
-
-3. The pipeline is now live at `http://localhost:9099`.
-   Call it from OmniAI with:
-
-```
-ask_llm("pipelines", "your message", model="claude_review")
-```
-
-Or set it as the default review endpoint in omni-ai.py via `/model`.
-
-### Valves (configurable per-request)
-
-| Valve | Default | Description |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | — | Your Anthropic API key |
-| `CLAUDE_MODEL` | `claude-opus-4-6` | Claude model to use for review |
-| `LOCAL_MODEL` | `qwen2.5-coder:32b-instruct-q4_K_M` | Local Ollama model for draft |
-| `OLLAMA_URL` | `http://host-gateway:11434` | Ollama endpoint |
-| `SKIP_LOCAL` | `false` | Set to `true` to call Claude directly |
 
 ---
 
-## Development
-
-### Python environments
+## Network Architecture
 
 ```
-~/interpreter-venv/   # OmniAI agent + panel
-~/aider-venv/         # Aider code editor
-~/ai-audio-venv/      # faster-whisper voice recognition
+[internet]
+    ↑
+  litellm:4000  (gateway network → Anthropic, OpenAI, Groq, etc.)
+    ↑
+[internal network — isolated]
+  litellm ← pipelines → ollama:11434
+                ↓
+           litellm (claude-sonnet/opus review)
+
+[default compose network]
+  nginx:80 ← open-webui:8080
+  nginx    ← stable-diffusion:7860
+
+nginx also reaches internal network (dual-homed)
+nginx reaches perplexica via host.docker.internal:3000
 ```
 
-### Key files
+---
 
-| File | Purpose |
-|---|---|
-| `omni-ai.py` | Agent brain — LLM loop, 48+ tools, self-improvement |
-| `omni-panel.py` | Textual TUI — embeds agent via PTY |
-| `omni-ctl.py` | Simple CLI control panel |
-| `docker-compose.yml` | Service stack |
-| `Dockerfile` | OmniAI agent container |
-| `pipelines/claude_review_pipe.py` | Claude review pipeline |
+## Troubleshooting
 
-### Add a new tool manually
-
-1. Write the function in `omni-ai.py` above `# @@INSERT_FUNCTION@@`
-2. Add the name to `TOOLS` list above `# @@INSERT_TOOL@@`
-3. Add to `TOOL_FN_MAP` above `# @@INSERT_MAPPING@@`
-
-Or ask OmniAI to do it: `self_improve("tool_name", "desc", code, params)`
-
-### Self-improvement
-
+**Pipelines not showing in OpenWebUI model selector:**
+```bash
+docker-compose restart pipelines
+docker logs pipelines | grep -E "(Loaded|Error)"
 ```
-/evolve          — start autonomous improvement loop
-/evolve stop     — pause
-/evolve status   — check progress
-/test            — run self-test
+
+**LiteLLM can't reach Ollama:**
+```bash
+docker exec litellm curl http://ollama:11434/api/tags
+```
+
+**Nginx 502 Bad Gateway:**
+```bash
+docker logs nginx
+# Check if the upstream container is healthy
+docker-compose ps
+```
+
+**Out of VRAM when running large models:**
+```bash
+# List loaded models and their VRAM usage
+docker exec -it ollama ollama ps
+# Unload a model
+docker exec -it ollama ollama stop qwen2.5-coder:32b-instruct-q4_K_M
+```
+
+**Reset a service's data volume:**
+```bash
+docker-compose stop <service>
+docker volume rm omni_<service>_data
+docker-compose up -d <service>
 ```

@@ -1,7 +1,0 @@
-endpoints:
-  - url: https://api.claude.com
-    api_key: <your-claude-api-key>
-  - url: https://api.gemini.com
-    api_key: <your-gemini-api-key>
-  - url: https://api.openai.com
-    api_key: <your-openai-api-key>

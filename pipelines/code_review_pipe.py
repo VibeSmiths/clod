@@ -1,21 +1,12 @@
 """
-OmniAI — Claude Review Pipeline
-================================
-Legacy / direct-Claude shortcut pipeline. Set SKIP_LOCAL="true" for a
-pure Claude call, or leave as default for local draft → Claude review.
-
-Updated to route Claude calls through LiteLLM gateway (http://litellm:4000)
-instead of the Anthropic API directly. This ensures budget tracking, fallbacks,
-and unified auth.
-
-For specialized two-stage pipelines see:
-  code_review_pipe.py   — qwen2.5-coder:32b → Claude
-  reason_review_pipe.py — deepseek-r1:14b   → Claude
-  chat_assist_pipe.py   — llama3.1:8b       → Claude
+OmniAI — Code Review Pipeline
+Stage 1: qwen2.5-coder:32b (local Ollama) — generates code solution
+Stage 2: claude-sonnet (via LiteLLM)      — senior engineer review
 """
 
 import json
 import os
+import re
 from typing import Generator, Iterator, List, Union
 
 import requests
@@ -25,27 +16,29 @@ from pydantic import BaseModel
 class Pipeline:
 
     class Valves(BaseModel):
-        CLAUDE_MODEL: str = "claude-sonnet"
         LOCAL_MODEL: str = "qwen2.5-coder:32b-instruct-q4_K_M"
+        CLAUDE_MODEL: str = "claude-sonnet"
         OLLAMA_URL: str = "http://ollama:11434"
         LITELLM_URL: str = "http://litellm:4000"
         LITELLM_API_KEY: str = "sk-local-dev"
         SKIP_LOCAL: str = "false"
         REVIEW_SYSTEM: str = (
-            "You are a senior engineer reviewing a draft response from a local AI model.\n"
+            "You are a senior software engineer conducting a code review.\n"
+            "You have received a draft solution from a local AI model.\n"
             "Your tasks:\n"
-            "1. Fix any bugs, incorrect logic, or broken code\n"
-            "2. Improve formatting and clarity — use markdown code blocks\n"
-            "3. If the response involves multiple steps or a plan, add a concise "
-            "'## Next Steps' section at the end\n"
-            "4. Keep the same language and tone — just make it correct and clean\n"
-            "Be concise. Do not add unnecessary padding."
+            "1. Fix any bugs, logic errors, or security vulnerabilities\n"
+            "2. Improve code quality: naming, structure, error handling, edge cases\n"
+            "3. Ensure idiomatic use of the language and relevant best practices\n"
+            "4. Add or correct docstrings and inline comments where the logic is non-obvious\n"
+            "5. If the solution spans multiple components, add a '## Architecture Notes' section\n"
+            "6. End with a concise '## Next Steps' if further work is implied\n"
+            "Use markdown code blocks with language tags. Be direct — no filler."
         )
 
     def __init__(self):
-        self.name = "OmniAI Claude Review"
+        self.name = "OmniAI Code Review"
         self.type = "pipe"
-        self.id = "claude_review"
+        self.id = "code_review"
         self.valves = self.Valves(
             OLLAMA_URL=os.getenv("OLLAMA_URL", "http://ollama:11434"),
             LITELLM_URL=os.getenv("LITELLM_BASE_URL", "http://litellm:4000"),
@@ -54,10 +47,9 @@ class Pipeline:
 
     async def on_startup(self):
         print(
-            f"[claude_review] ready — "
+            f"[code_review] ready — "
             f"local={self.valves.LOCAL_MODEL} "
-            f"claude={self.valves.CLAUDE_MODEL} "
-            f"litellm={self.valves.LITELLM_URL}"
+            f"claude={self.valves.CLAUDE_MODEL}"
         )
 
     async def on_shutdown(self):
@@ -74,9 +66,8 @@ class Pipeline:
         skip_local = self.valves.SKIP_LOCAL.lower() == "true"
         local_draft = ""
 
-        # ── Stage 1: local Ollama draft ────────────────────────────────────────
         if not skip_local:
-            yield "*Drafting locally…*\n\n"
+            yield "*Drafting code locally (qwen2.5-coder:32b)…*\n\n"
             try:
                 resp = requests.post(
                     f"{self.valves.OLLAMA_URL}/api/chat",
@@ -97,7 +88,6 @@ class Pipeline:
         if local_draft:
             yield "\n---\n*Claude reviewing…*\n\n---\n\n"
 
-        # ── Stage 2: Claude via LiteLLM ────────────────────────────────────────
         if local_draft:
             claude_user_content = (
                 f"**User's request:**\n{user_message}\n\n"

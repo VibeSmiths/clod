@@ -1,21 +1,12 @@
 """
-OmniAI — Claude Review Pipeline
-================================
-Legacy / direct-Claude shortcut pipeline. Set SKIP_LOCAL="true" for a
-pure Claude call, or leave as default for local draft → Claude review.
-
-Updated to route Claude calls through LiteLLM gateway (http://litellm:4000)
-instead of the Anthropic API directly. This ensures budget tracking, fallbacks,
-and unified auth.
-
-For specialized two-stage pipelines see:
-  code_review_pipe.py   — qwen2.5-coder:32b → Claude
-  reason_review_pipe.py — deepseek-r1:14b   → Claude
-  chat_assist_pipe.py   — llama3.1:8b       → Claude
+OmniAI — Reasoning Review Pipeline
+Stage 1: deepseek-r1:14b (local Ollama) — deep analysis, chain-of-thought
+Stage 2: claude-sonnet (via LiteLLM)    — senior architect structures and refines output
 """
 
 import json
 import os
+import re
 from typing import Generator, Iterator, List, Union
 
 import requests
@@ -25,27 +16,28 @@ from pydantic import BaseModel
 class Pipeline:
 
     class Valves(BaseModel):
+        LOCAL_MODEL: str = "deepseek-r1:14b"
         CLAUDE_MODEL: str = "claude-sonnet"
-        LOCAL_MODEL: str = "qwen2.5-coder:32b-instruct-q4_K_M"
         OLLAMA_URL: str = "http://ollama:11434"
         LITELLM_URL: str = "http://litellm:4000"
         LITELLM_API_KEY: str = "sk-local-dev"
         SKIP_LOCAL: str = "false"
         REVIEW_SYSTEM: str = (
-            "You are a senior engineer reviewing a draft response from a local AI model.\n"
+            "You are a senior architect and analyst reviewing reasoning from a local AI model.\n"
+            "The model has performed chain-of-thought analysis (think tags already stripped).\n"
             "Your tasks:\n"
-            "1. Fix any bugs, incorrect logic, or broken code\n"
-            "2. Improve formatting and clarity — use markdown code blocks\n"
-            "3. If the response involves multiple steps or a plan, add a concise "
-            "'## Next Steps' section at the end\n"
-            "4. Keep the same language and tone — just make it correct and clean\n"
-            "Be concise. Do not add unnecessary padding."
+            "1. Extract the core conclusions and discard verbose reasoning noise\n"
+            "2. Verify logical consistency — flag any flawed or unsupported steps\n"
+            "3. Structure the output clearly: problem statement, analysis, recommendation\n"
+            "4. Add quantitative estimates or risk assessments where they are absent\n"
+            "5. End with a concise '## Decision / Recommendation' section\n"
+            "Be precise. Use headers and bullet points. No padding."
         )
 
     def __init__(self):
-        self.name = "OmniAI Claude Review"
+        self.name = "OmniAI Reasoning Review"
         self.type = "pipe"
-        self.id = "claude_review"
+        self.id = "reason_review"
         self.valves = self.Valves(
             OLLAMA_URL=os.getenv("OLLAMA_URL", "http://ollama:11434"),
             LITELLM_URL=os.getenv("LITELLM_BASE_URL", "http://litellm:4000"),
@@ -54,10 +46,9 @@ class Pipeline:
 
     async def on_startup(self):
         print(
-            f"[claude_review] ready — "
+            f"[reason_review] ready — "
             f"local={self.valves.LOCAL_MODEL} "
-            f"claude={self.valves.CLAUDE_MODEL} "
-            f"litellm={self.valves.LITELLM_URL}"
+            f"claude={self.valves.CLAUDE_MODEL}"
         )
 
     async def on_shutdown(self):
@@ -74,9 +65,8 @@ class Pipeline:
         skip_local = self.valves.SKIP_LOCAL.lower() == "true"
         local_draft = ""
 
-        # ── Stage 1: local Ollama draft ────────────────────────────────────────
         if not skip_local:
-            yield "*Drafting locally…*\n\n"
+            yield "*Reasoning locally (deepseek-r1:14b)…*\n\n"
             try:
                 resp = requests.post(
                     f"{self.valves.OLLAMA_URL}/api/chat",
@@ -90,6 +80,13 @@ class Pipeline:
                 )
                 resp.raise_for_status()
                 local_draft = resp.json().get("message", {}).get("content", "")
+
+                # Strip DeepSeek chain-of-thought blocks
+                if local_draft:
+                    local_draft = re.sub(
+                        r"<think>.*?</think>", "", local_draft, flags=re.DOTALL
+                    ).strip()
+
             except Exception as e:
                 yield f"> Local model error: {e}\n> Falling back to Claude only.\n\n"
                 skip_local = True
@@ -97,7 +94,6 @@ class Pipeline:
         if local_draft:
             yield "\n---\n*Claude reviewing…*\n\n---\n\n"
 
-        # ── Stage 2: Claude via LiteLLM ────────────────────────────────────────
         if local_draft:
             claude_user_content = (
                 f"**User's request:**\n{user_message}\n\n"

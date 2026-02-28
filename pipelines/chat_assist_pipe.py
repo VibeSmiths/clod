@@ -1,17 +1,7 @@
 """
-OmniAI — Claude Review Pipeline
-================================
-Legacy / direct-Claude shortcut pipeline. Set SKIP_LOCAL="true" for a
-pure Claude call, or leave as default for local draft → Claude review.
-
-Updated to route Claude calls through LiteLLM gateway (http://litellm:4000)
-instead of the Anthropic API directly. This ensures budget tracking, fallbacks,
-and unified auth.
-
-For specialized two-stage pipelines see:
-  code_review_pipe.py   — qwen2.5-coder:32b → Claude
-  reason_review_pipe.py — deepseek-r1:14b   → Claude
-  chat_assist_pipe.py   — llama3.1:8b       → Claude
+OmniAI — Chat Assist Pipeline
+Stage 1: llama3.1:8b (local Ollama)  — fast conversational draft
+Stage 2: claude-sonnet (via LiteLLM) — polish, fact-check, fill gaps
 """
 
 import json
@@ -25,27 +15,27 @@ from pydantic import BaseModel
 class Pipeline:
 
     class Valves(BaseModel):
+        LOCAL_MODEL: str = "llama3.1:8b"
         CLAUDE_MODEL: str = "claude-sonnet"
-        LOCAL_MODEL: str = "qwen2.5-coder:32b-instruct-q4_K_M"
         OLLAMA_URL: str = "http://ollama:11434"
         LITELLM_URL: str = "http://litellm:4000"
         LITELLM_API_KEY: str = "sk-local-dev"
         SKIP_LOCAL: str = "false"
         REVIEW_SYSTEM: str = (
-            "You are a senior engineer reviewing a draft response from a local AI model.\n"
+            "You are an expert assistant polishing a draft response from a local AI model.\n"
             "Your tasks:\n"
-            "1. Fix any bugs, incorrect logic, or broken code\n"
-            "2. Improve formatting and clarity — use markdown code blocks\n"
-            "3. If the response involves multiple steps or a plan, add a concise "
-            "'## Next Steps' section at the end\n"
-            "4. Keep the same language and tone — just make it correct and clean\n"
-            "Be concise. Do not add unnecessary padding."
+            "1. Correct any factual errors or outdated information\n"
+            "2. Fill gaps — if the draft missed part of the question, address it\n"
+            "3. Improve clarity and helpfulness while matching the user's tone\n"
+            "4. Keep the response appropriately concise — no padding\n"
+            "5. If the topic warrants it, add a brief '## Useful Resources' section\n"
+            "Sound natural. Avoid AI-speak."
         )
 
     def __init__(self):
-        self.name = "OmniAI Claude Review"
+        self.name = "OmniAI Chat Assist"
         self.type = "pipe"
-        self.id = "claude_review"
+        self.id = "chat_assist"
         self.valves = self.Valves(
             OLLAMA_URL=os.getenv("OLLAMA_URL", "http://ollama:11434"),
             LITELLM_URL=os.getenv("LITELLM_BASE_URL", "http://litellm:4000"),
@@ -54,10 +44,9 @@ class Pipeline:
 
     async def on_startup(self):
         print(
-            f"[claude_review] ready — "
+            f"[chat_assist] ready — "
             f"local={self.valves.LOCAL_MODEL} "
-            f"claude={self.valves.CLAUDE_MODEL} "
-            f"litellm={self.valves.LITELLM_URL}"
+            f"claude={self.valves.CLAUDE_MODEL}"
         )
 
     async def on_shutdown(self):
@@ -74,9 +63,8 @@ class Pipeline:
         skip_local = self.valves.SKIP_LOCAL.lower() == "true"
         local_draft = ""
 
-        # ── Stage 1: local Ollama draft ────────────────────────────────────────
         if not skip_local:
-            yield "*Drafting locally…*\n\n"
+            yield "*Drafting conversationally (llama3.1:8b)…*\n\n"
             try:
                 resp = requests.post(
                     f"{self.valves.OLLAMA_URL}/api/chat",
@@ -84,9 +72,9 @@ class Pipeline:
                         "model": self.valves.LOCAL_MODEL,
                         "messages": messages,
                         "stream": False,
-                        "options": {"num_ctx": 16384},
+                        "options": {"num_ctx": 8192},
                     },
-                    timeout=300,
+                    timeout=120,
                 )
                 resp.raise_for_status()
                 local_draft = resp.json().get("message", {}).get("content", "")
@@ -97,7 +85,6 @@ class Pipeline:
         if local_draft:
             yield "\n---\n*Claude reviewing…*\n\n---\n\n"
 
-        # ── Stage 2: Claude via LiteLLM ────────────────────────────────────────
         if local_draft:
             claude_user_content = (
                 f"**User's request:**\n{user_message}\n\n"
@@ -122,11 +109,11 @@ class Pipeline:
                     "messages": [
                         {"role": "system", "content": self.valves.REVIEW_SYSTEM},
                     ] + claude_messages,
-                    "max_tokens": 8192,
+                    "max_tokens": 4096,
                     "stream": True,
                 },
                 stream=True,
-                timeout=180,
+                timeout=120,
             )
             resp.raise_for_status()
 

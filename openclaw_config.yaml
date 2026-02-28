@@ -1,4 +1,0 @@
-model:
-  name: qwen2.5-coder
-  version: 32b
-  device: /dev/nvidia0

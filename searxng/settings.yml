@@ -1,4 +1,4 @@
-use_default_settings: false  # start with a minimal engine list so we don't load absent or internet-only engines
+use_default_settings: true
 
 general:
   debug: false
@@ -13,7 +13,7 @@ search:
     - json
 
 server:
-  secret_key: "omni-searxng-secret-key-change-me"
+  secret_key: "19cfdb4f-25d1-492b-8f81-6ff89be01cc5"
   limiter: false
   image_proxy: true
   port: 8080
@@ -35,6 +35,9 @@ engines:
   - name: github
     engine: github
     shortcut: gh
+  - name: stackoverflow
+    engine: stackoverflow
+    shortcut: so
   - name: arxiv
     engine: arxiv
     shortcut: ar
