@@ -87,8 +87,10 @@ Select a pipeline from the **model selector** in OpenWebUI (top of the chat wind
 
 ### GPU Note
 
-`qwen2.5-coder:32b` requires ~20 GB VRAM. The RTX 5070 Ti has 24 GB, but Stable
-Diffusion also uses the GPU. **Stop SD before using the 32b code pipeline:**
+`qwen2.5-coder:32b` requires ~20 GB VRAM. The RTX 4070 Ti SUPER has 16 GB, so the
+32b model **will not fit** alongside other GPU workloads and may not fit at all depending
+on CUDA overhead. Use `qwen2.5-coder:14b` (10 GB) as a practical alternative, or stop
+all other GPU processes first. **Stop SD before attempting the 32b pipeline:**
 
 ```bash
 docker-compose stop stable-diffusion
@@ -108,7 +110,7 @@ Pull models with `docker exec -it ollama ollama pull <model>`:
 
 | Model | Tag | Purpose |
 |-------|-----|---------|
-| qwen2.5-coder | `32b-instruct-q4_K_M` | Default code pipeline (24 GB VRAM) |
+| qwen2.5-coder | `32b-instruct-q4_K_M` | Code pipeline (~20 GB VRAM — exceeds 4070 Ti SUPER capacity with overhead) |
 | qwen2.5-coder | `14b` | Lighter code model (10 GB VRAM) |
 | deepseek-r1 | `14b` | Reasoning / chain-of-thought |
 | llama3.1 | `8b` | Fast conversational |
@@ -176,9 +178,10 @@ and Claude tier automatically.
 | `reason_review` | `deepseek-r1:14b` | `claude-sonnet` | Chain-of-thought + architect structuring |
 | `chat_assist` | `llama3.1:8b` | `claude-haiku` | Conversational draft + light polish |
 
-> **GPU note:** `qwen2.5-coder:32b-instruct-q4_K_M` requires ~20 GB VRAM.
-> Stop Stable Diffusion before using `code_review` if both are running:
-> `docker-compose stop stable-diffusion`
+> **GPU note:** `qwen2.5-coder:32b-instruct-q4_K_M` requires ~20 GB VRAM. The RTX 4070 Ti
+> SUPER has 16 GB — the 32b model will not fit with CUDA overhead. Use `qwen2.5-coder:14b`
+> (10 GB) for the `code_review` pipeline, or switch `LOCAL_MODEL` in the pipeline valves.
+> If you do attempt 32b: `docker-compose stop stable-diffusion` first to free VRAM.
 
 ### Token Budget & Offline Mode
 
