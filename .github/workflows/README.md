@@ -90,7 +90,21 @@ On failure: downloads the Windows EXE artifact and re-uploads it as
 
 ### release
 Skipped on `pull_request`. Only runs when `integration-tests` result is `success`.
-Creates a GitHub Release tagged `v{version}` with both `clod.exe` and `clod.AppImage`.
+Gathers both binaries, signs them with GPG, then creates a GitHub Release tagged
+`v{version}` with `clod.exe`, `clod.AppImage`, and their `.asc` detached signatures.
+
+**Signing flow:**
+1. Import `GPG_PRIVATE_KEY` secret into the runner's GPG keyring
+2. `gpg --detach-sign --armor` each binary → produces `clod.exe.asc` / `clod.AppImage.asc`
+3. All four files uploaded together in the release
+4. If `GPG_PRIVATE_KEY` is not set, signing is skipped with a `::warning::` annotation
+   (no build failure — allows releases before keys are configured)
+
+**Required secrets:** `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`
+Run `generate-gpg-key.yml` once via `workflow_dispatch` to generate the key pair.
+
+**Public key:** commit the downloaded `clod-signing-key.asc` to the repo root so users
+can verify downloads with `gpg --import clod-signing-key.asc && gpg --verify clod.exe.asc clod.exe`.
 
 ---
 

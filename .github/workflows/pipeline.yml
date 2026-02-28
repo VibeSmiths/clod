@@ -240,6 +240,41 @@ jobs:
           find release-artifacts -type f \( -name "clod.exe" -o -name "clod.AppImage" \) \
             -exec cp {} release-files/ \;
           ls -lah release-files/
+
+      - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "${GPG_PRIVATE_KEY}" ]; then
+            echo "::warning::GPG_PRIVATE_KEY secret not set — binaries will not be signed"
+            exit 0
+          fi
+          echo "${GPG_PRIVATE_KEY}" | gpg --batch --import
+          gpg --list-secret-keys
+
+      - name: Sign release binaries
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [ -z "${GPG_PRIVATE_KEY}" ]; then
+            echo "Skipping signing — GPG_PRIVATE_KEY not set"
+            exit 0
+          fi
+          for f in release-files/clod.exe release-files/clod.AppImage; do
+            if [ -f "$f" ]; then
+              echo "Signing ${f}..."
+              gpg --batch --yes \
+                --passphrase "${GPG_PASSPHRASE}" \
+                --pinentry-mode loopback \
+                --detach-sign --armor \
+                "${f}"
+              echo "  -> ${f}.asc created"
+            fi
+          done
+          echo "Release files after signing:"
+          ls -lah release-files/
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -281,6 +316,23 @@ jobs:
             clod --pipeline code_review    # local Qwen -> Claude review
             clod --tools -p "list files"   # with tool use
             clod --index C:\projects       # generate CLAUDE.md for all projects
+            ```
+
+            ### Verifying Downloads
+
+            Each binary is signed with GPG. The public key is committed to the
+            repo as `clod-signing-key.asc`.
+
+            **Linux / macOS:**
+            ```bash
+            curl -sL https://raw.githubusercontent.com/${{ github.repository }}/main/clod-signing-key.asc | gpg --import
+            gpg --verify clod.AppImage.asc clod.AppImage
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            gpg --import clod-signing-key.asc
+            gpg --verify clod.exe.asc clod.exe
             ```
 
             ### Info
