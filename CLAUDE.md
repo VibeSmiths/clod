@@ -16,5 +16,5 @@
 | SearXNG | localhost:8080 | Private search (used by search_web tool) |
 | n8n | localhost:5678 | Automation workflows |
 | ChromaDB | localhost:8000 | Vector memory (semantic_recall tool) |
-| ComfyUI | localhost:8188 | Stable Diffusion image generation |
+| Stable Diffusion (AUTOMATIC1111) | localhost:7860 | Image generation (integrated with Open-WebUI) |
 | Ollama | localhost:11434 | Local LLM inference |

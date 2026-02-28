@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import pathlib
+import platform
 import re
 import subprocess
 import sys
@@ -27,6 +28,12 @@ import urllib.parse
 from typing import Generator, Optional
 
 import requests
+
+try:
+    import psutil as _psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
@@ -39,6 +46,9 @@ __version__ = "1.0.0"
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 CLOUD_MODEL_PREFIXES = ("claude-", "gpt-", "o1-", "o3-", "gemini-", "groq-", "together-")
+
+SD_WEBUI_URL = "http://localhost:7860"  # AUTOMATIC1111 WebUI (stable-diffusion container)
+COMFYUI_URL = "http://localhost:8188"   # ComfyUI video service
 
 SONNET_MODEL = "claude-sonnet-4-6"
 
@@ -67,6 +77,16 @@ PIPELINE_CONFIGS: dict[str, dict] = {
 TOKEN_WARN = 0.80  # yellow warning
 TOKEN_OFFER = 0.95  # prompt to go offline
 TOKEN_LIMIT = 1.00  # force offline
+
+# VRAM tier table — (min_effective_mb, model_name, label)
+# effective = total VRAM - 2000 MiB reserved for CUDA driver overhead
+VRAM_TIERS: list[tuple[int, str, str]] = [
+    (22_000, "qwen2.5-coder:32b-instruct-q4_K_M", "32b coder  (~20 GB)"),
+    (11_000, "qwen2.5-coder:14b",                  "14b coder  (~10 GB)"),
+    (9_500,  "deepseek-r1:14b",                    "14b reason (~9 GB) "),
+    (5_000,  "llama3.1:8b",                        "8b chat    (~5 GB) "),
+]
+VRAM_CUDA_OVERHEAD_MB = 2_000  # headroom reserved from total for CUDA runtime
 
 # Project type detection: (glob_pattern, label).
 # Patterns starting with "*" are passed to Path.glob(); others are exact names.
@@ -235,6 +255,10 @@ def load_config() -> dict:
         "pipeline": None,
         "enable_tools": False,
         "token_budget": 100_000,  # session Claude token budget (input + output)
+        "auto_model": False,
+        "compose_file": str(pathlib.Path(__file__).parent / "docker-compose.yml"),
+        "dotenv_file":  str(pathlib.Path(__file__).parent / ".env"),
+        "sd_mode":      "image",   # last-active SD mode: "image" | "video"
     }
     path = config_path()
     if path.exists():
@@ -468,6 +492,309 @@ def warmup_ollama_model(model: str, cfg: dict) -> None:
             )
         except Exception:
             pass  # warmup failure is non-fatal
+
+
+def query_gpu_vram() -> Optional[dict]:
+    """
+    Query nvidia-smi for GPU info. Returns dict with keys:
+      name, total_mb, free_mb
+    Returns None if nvidia-smi is unavailable (no GPU / not NVIDIA).
+    """
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.free",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        line = result.stdout.strip().splitlines()[0]
+        name, total, free = [x.strip() for x in line.split(",")]
+        return {"name": name, "total_mb": int(total), "free_mb": int(free)}
+    except Exception:
+        return None
+
+
+def recommend_model_for_vram(total_mb: int) -> Optional[str]:
+    """Return the best-fitting model name for the given total VRAM, or None."""
+    effective = total_mb - VRAM_CUDA_OVERHEAD_MB
+    for min_mb, model, _ in VRAM_TIERS:
+        if effective >= min_mb:
+            return model
+    return None
+
+
+def query_system_info() -> dict:
+    """
+    Return CPU and RAM info.
+    Keys: cpu_name, cpu_physical, cpu_logical, ram_total_mb, ram_available_mb.
+    Gracefully returns partial dict if psutil is unavailable.
+    """
+    try:
+        cpu_name = platform.processor() or platform.machine() or "unknown"
+        logical = os.cpu_count() or 0
+        if HAS_PSUTIL:
+            physical = _psutil.cpu_count(logical=False) or logical
+            vm = _psutil.virtual_memory()
+            ram_total_mb = vm.total // (1024 * 1024)
+            ram_available_mb = vm.available // (1024 * 1024)
+        else:
+            physical = logical
+            ram_total_mb = 0
+            ram_available_mb = 0
+        return {
+            "cpu_name": cpu_name,
+            "cpu_physical": physical,
+            "cpu_logical": logical,
+            "ram_total_mb": ram_total_mb,
+            "ram_available_mb": ram_available_mb,
+        }
+    except Exception:
+        return {}
+
+
+def query_comfyui_running() -> bool:
+    """Return True if the Stable Diffusion WebUI (AUTOMATIC1111) is reachable on localhost:7860."""
+    try:
+        r = requests.get(SD_WEBUI_URL, timeout=2)
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
+def find_comfyui_container() -> Optional[str]:
+    """
+    Return the Docker container name bound to port 7860 (the stable-diffusion service),
+    including stopped containers, or None if not found.
+    """
+    try:
+        r = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "publish=7860", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if r.returncode == 0:
+            names = r.stdout.strip().splitlines()
+            return names[0] if names else None
+    except Exception:
+        pass
+    return None
+
+
+def comfyui_docker_action(action: str) -> tuple[bool, str]:
+    """
+    Stop or start the ComfyUI Docker container.
+    action: 'stop' | 'start'
+    Returns (success: bool, message: str).
+    """
+    container = find_comfyui_container()
+    if not container:
+        return False, "Stable Diffusion container not found via 'docker ps -a --filter publish=7860'"
+    try:
+        r = subprocess.run(
+            ["docker", action, container],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if r.returncode == 0:
+            return True, f"docker {action} {container}: OK"
+        return False, (r.stderr.strip() or f"exit code {r.returncode}")
+    except FileNotFoundError:
+        return False, "docker CLI not found — is Docker Desktop running?"
+    except Exception as e:
+        return False, str(e)
+
+
+def query_video_running() -> bool:
+    """Return True if ComfyUI (video) is reachable on localhost:8188."""
+    try:
+        r = requests.get(COMFYUI_URL, timeout=2)
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
+def update_dotenv_key(dotenv_path: str, key: str, value: str) -> bool:
+    """Update (or append) KEY=value in a .env file. Returns False on any error."""
+    try:
+        path = pathlib.Path(dotenv_path)
+        if not path.exists():
+            return False
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        updated = False
+        for i, line in enumerate(lines):
+            if re.match(rf"^{re.escape(key)}\s*=", line):
+                lines[i] = f"{key}={value}\n"
+                updated = True
+                break
+        if not updated:
+            lines.append(f"{key}={value}\n")
+        path.write_text("".join(lines), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def sd_switch_mode(to_mode: str, cfg: dict) -> tuple[bool, str]:
+    """
+    Switch the active SD mode ('image' | 'video') by:
+      1. Updating IMAGE_GENERATION_ENGINE in .env
+      2. Stopping the old profile's services
+      3. Starting the new profile's services
+      4. Force-recreating open-webui to pick up the engine change
+    Returns (success, message).
+    """
+    if to_mode not in ("image", "video"):
+        return False, f"Unknown mode '{to_mode}' — use 'image' or 'video'"
+    from_mode = "video" if to_mode == "image" else "image"
+    compose   = cfg.get("compose_file", "")
+    dotenv    = cfg.get("dotenv_file",  "")
+    engine    = "automatic1111" if to_mode == "image" else "comfyui"
+
+    if not pathlib.Path(compose).exists():
+        return False, f"docker-compose.yml not found at {compose}"
+
+    errors: list[str] = []
+
+    # 1. Update .env
+    if dotenv and not update_dotenv_key(dotenv, "IMAGE_GENERATION_ENGINE", engine):
+        errors.append("could not update .env (non-fatal)")
+
+    base_cmd = ["docker", "compose", "-f", compose]
+
+    # 2. Stop old profile
+    try:
+        r = subprocess.run(
+            base_cmd + ["--profile", from_mode, "stop"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            errors.append(f"stop {from_mode}: {r.stderr.strip()}")
+    except Exception as e:
+        errors.append(f"stop {from_mode}: {e}")
+
+    # 3. Start new profile
+    try:
+        r = subprocess.run(
+            base_cmd + ["--profile", to_mode, "up", "-d"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if r.returncode != 0:
+            errors.append(f"up {to_mode}: {r.stderr.strip()}")
+    except Exception as e:
+        errors.append(f"up {to_mode}: {e}")
+
+    # 4. Restart open-webui to adopt new IMAGE_GENERATION_ENGINE
+    try:
+        r = subprocess.run(
+            base_cmd + ["up", "-d", "--force-recreate", "open-webui"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if r.returncode != 0:
+            errors.append(f"restart open-webui: {r.stderr.strip()}")
+    except Exception as e:
+        errors.append(f"restart open-webui: {e}")
+
+    if errors:
+        return False, " | ".join(errors)
+    return True, f"Switched to {to_mode} mode (engine={engine})"
+
+
+def comfyui_docker_action_video(action: str) -> tuple[bool, str]:
+    """Stop/start the ComfyUI (video) container via port 8188."""
+    try:
+        r = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "publish=8188", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        container = r.stdout.strip().splitlines()[0] if r.returncode == 0 else None
+    except Exception:
+        container = None
+    if not container:
+        return False, "ComfyUI (video) container not found"
+    try:
+        r = subprocess.run(["docker", action, container], capture_output=True, text=True, timeout=30)
+        return (r.returncode == 0), (r.stderr.strip() or f"docker {action} {container}: OK")
+    except FileNotFoundError:
+        return False, "docker CLI not found"
+    except Exception as e:
+        return False, str(e)
+
+
+def print_startup_banner(model: str) -> None:
+    """Print a hardware-aware startup panel with model recommendation."""
+    sys_info = query_system_info()
+    gpu = query_gpu_vram()
+    img_on = query_comfyui_running()
+    vid_on = query_video_running()
+
+    lines: list[str] = []
+
+    # CPU / RAM
+    if sys_info:
+        cpu_name = sys_info.get("cpu_name", "unknown")
+        p = sys_info.get("cpu_physical", 0)
+        lg = sys_info.get("cpu_logical", 0)
+        lines.append(f"[bold]CPU[/bold]  {cpu_name}  [dim]{p}c / {lg}t[/dim]")
+        ram_t = sys_info.get("ram_total_mb", 0)
+        ram_a = sys_info.get("ram_available_mb", 0)
+        if ram_t:
+            lines.append(f"[bold]RAM[/bold]  {ram_t:,} MiB total  •  {ram_a:,} MiB free")
+
+    # GPU
+    if gpu:
+        sd_parts = []
+        if img_on: sd_parts.append("[yellow]A1111 active[/yellow]")
+        if vid_on: sd_parts.append("[yellow]ComfyUI active[/yellow]")
+        sd_tag = ("  " + "  ".join(sd_parts)) if sd_parts else ""
+        lines.append(
+            f"[bold]GPU[/bold]  {gpu['name']}  "
+            f"{gpu['total_mb']:,} MiB total  •  {gpu['free_mb']:,} MiB free{sd_tag}"
+        )
+    else:
+        lines.append("[bold]GPU[/bold]  [dim]not detected (CPU-only)[/dim]")
+
+    # Recommendation
+    lines.append("")
+    lines.append("[bold cyan]Recommendation[/bold cyan]")
+    rec = recommend_model_for_vram(gpu["total_mb"]) if gpu else None
+    comfyui_on = img_on or vid_on
+
+    if rec:
+        marker = "[green]✓[/green]" if rec == model else "[yellow]→[/yellow]"
+        note = "" if rec == model else f"  [dim](run [bold]/model {rec}[/bold] to switch)[/dim]"
+        lines.append(f"  {marker}  [bold]{rec}[/bold]{note}")
+        if comfyui_on and gpu:
+            used_mb = gpu["total_mb"] - gpu["free_mb"]
+            if used_mb > 1_000:
+                lines.append(
+                    f"  [dim]SD using ~{used_mb:,} MiB  •  "
+                    f"[bold]/sd stop[/bold] to reclaim, or [bold]/sd image[/bold]/[bold]/sd video[/bold] to switch mode[/dim]"
+                )
+    elif gpu:
+        lines.append("  [red]VRAM too low for any configured model[/red]")
+        if comfyui_on and gpu:
+            used_mb = gpu["total_mb"] - gpu["free_mb"]
+            lines.append(f"  [dim]Try [bold]/sd stop[/bold] to reclaim ~{used_mb:,} MiB[/dim]")
+    else:
+        lines.append("  [dim]No GPU — CPU inference only (expect slow responses)[/dim]")
+        ram_t = sys_info.get("ram_total_mb", 0) if sys_info else 0
+        if ram_t >= 32_000:
+            lines.append("  [dim]32 GB+ RAM available — CPU offloading may be viable[/dim]")
+
+    console.print(Panel(
+        "\n".join(lines),
+        title="[cyan]System[/cyan]",
+        border_style="cyan",
+        expand=False,
+    ))
 
 
 # ── Backend Adapters ───────────────────────────────────────────────────────────
@@ -924,6 +1251,8 @@ def print_help() -> None:
                     "  [yellow]/clear[/yellow]                   clear conversation history",
                     "  [yellow]/save [/yellow][dim]<file>[/dim]            save conversation to JSON",
                     "  [yellow]/index [/yellow][dim][path][/dim]           index projects: generate CLAUDE.md + README",
+                    "  [yellow]/gpu[/yellow]                     show GPU VRAM + optimal model recommendation",
+                    "  [yellow]/sd [/yellow][dim][image|video|stop|start][/dim]  switch image/video mode or stop/start SD",
                     "  [yellow]/help[/yellow]                    show this message",
                     "  [yellow]/exit[/yellow] or [yellow]/quit[/yellow]            exit clod",
                     "",
@@ -1157,6 +1486,127 @@ def handle_slash(
         else:
             run_index_mode(path, session_state["cfg"])
 
+    elif verb == "/gpu":
+        gpu = query_gpu_vram()
+        if gpu is None:
+            console.print("[yellow]No NVIDIA GPU detected (nvidia-smi unavailable).[/yellow]")
+        else:
+            rec = recommend_model_for_vram(gpu["total_mb"])
+            effective = gpu["total_mb"] - VRAM_CUDA_OVERHEAD_MB
+            tier_rows = "\n".join(
+                f"  {'[green]>>[/green]' if model_name == rec else '  '} "
+                f"{label}  {model_name}"
+                for min_mb, model_name, label in VRAM_TIERS
+            )
+            console.print(Panel(
+                f"[bold]{gpu['name']}[/bold]\n"
+                f"  Total:      {gpu['total_mb']:,} MiB\n"
+                f"  Free now:   {gpu['free_mb']:,} MiB\n"
+                f"  Effective:  {effective:,} MiB  (total − {VRAM_CUDA_OVERHEAD_MB} MiB overhead)\n\n"
+                f"[bold cyan]Model tiers:[/bold cyan]\n{tier_rows}\n\n"
+                f"[dim]Recommended:[/dim] [bold cyan]{rec or 'none (< 5 GB)'}[/bold cyan]  "
+                f"  [dim](use [bold]/model {rec}[/bold] to switch)[/dim]",
+                title="[cyan]GPU[/cyan]",
+                border_style="cyan",
+                expand=False,
+            ))
+            if arg.lower() == "use" and rec:
+                session_state["model"] = rec
+                session_state["pipeline"] = None
+                console.print(f"[dim]Model → [bold]{rec}[/bold][/dim]")
+                warmup_ollama_model(rec, session_state["cfg"])
+
+    elif verb == "/sd":
+        sub = arg.lower().strip()
+
+        if sub in ("image", "video"):
+            # ── Mode switch ───────────────────────────────────────────────
+            current = session_state.get("sd_mode", cfg.get("sd_mode", "image"))
+            if sub == current:
+                console.print(f"[dim]Already in [bold]{sub}[/bold] mode.[/dim]")
+            else:
+                svc     = "AUTOMATIC1111 (localhost:7860)" if sub == "image" else "ComfyUI (localhost:8188)"
+                console.print(
+                    f"[dim]Switching to [bold]{sub}[/bold] mode → {svc}  "
+                    f"(stopping {current}, restarting Open-WebUI…)[/dim]"
+                )
+                ok, msg = sd_switch_mode(sub, session_state["cfg"])
+                if ok:
+                    session_state["sd_mode"] = sub
+                    gpu = query_gpu_vram()
+                    note  = "" if sub == "image" else "  [dim]Use ComfyUI at localhost:8188 for video workflows.[/dim]"
+                    owui  = "automatic1111" if sub == "image" else "comfyui"
+                    rec   = recommend_model_for_vram(gpu["total_mb"]) if gpu else None
+                    console.print(
+                        Panel(
+                            f"[green]Switched to [bold]{sub}[/bold] mode.[/green]\n"
+                            f"  Service:   [bold]{svc}[/bold]\n"
+                            f"  Open-WebUI image engine: [bold]{owui}[/bold]\n"
+                            + (f"  GPU free:  [bold]{gpu['free_mb']:,} MiB[/bold]  •  "
+                               f"LLM recommendation: [bold cyan]{rec or 'none'}[/bold cyan]\n"
+                               if gpu else "")
+                            + (note + "\n" if note else ""),
+                            title=f"[cyan]SD mode → {sub}[/cyan]",
+                            border_style="cyan",
+                            expand=False,
+                        )
+                    )
+                else:
+                    console.print(f"[red]Switch failed: {msg}[/red]")
+
+        elif sub == "stop":
+            # ── Stop whichever service is running ─────────────────────────
+            img_on   = query_comfyui_running()
+            vid_on   = query_video_running()
+            if not img_on and not vid_on:
+                console.print("[dim]No SD service is running.[/dim]")
+            else:
+                ok, msg = comfyui_docker_action("stop")
+                ok2, msg2 = (True, "") if not vid_on else comfyui_docker_action_video("stop")
+                if ok and ok2:
+                    console.print("[green]SD services stopped.[/green]")
+                    gpu = query_gpu_vram()
+                    if gpu:
+                        rec = recommend_model_for_vram(gpu["total_mb"])
+                        console.print(
+                            f"[dim]GPU free: [bold]{gpu['free_mb']:,} MiB[/bold]  •  "
+                            f"Recommended LLM: [bold cyan]{rec or 'none'}[/bold cyan][/dim]"
+                        )
+                else:
+                    console.print(f"[red]Stop errors: {msg} {msg2}[/red]")
+
+        elif sub == "start":
+            # ── Restart last-active mode ──────────────────────────────────
+            mode = session_state.get("sd_mode", session_state["cfg"].get("sd_mode", "image"))
+            console.print(f"[dim]Starting [bold]{mode}[/bold] mode…[/dim]")
+            ok, msg = sd_switch_mode(mode, session_state["cfg"])
+            if ok:
+                console.print(f"[green]SD started in [bold]{mode}[/bold] mode.[/green]")
+            else:
+                console.print(f"[red]Failed: {msg}[/red]")
+
+        else:
+            # ── Status ────────────────────────────────────────────────────
+            img_on  = query_comfyui_running()
+            vid_on  = query_video_running()
+            gpu     = query_gpu_vram()
+            mode    = session_state.get("sd_mode", "image")
+            img_str = "[green]running[/green]" if img_on else "[dim]stopped[/dim]"
+            vid_str = "[green]running[/green]" if vid_on else "[dim]stopped[/dim]"
+            used    = (gpu["total_mb"] - gpu["free_mb"]) if gpu else 0
+            console.print(Panel(
+                f"[bold]Image[/bold]  AUTOMATIC1111  localhost:7860  {img_str}\n"
+                f"[bold]Video[/bold]  ComfyUI        localhost:8188  {vid_str}\n"
+                + (f"  GPU: {gpu['free_mb']:,} MiB free  •  ~{used:,} MiB in use\n" if gpu else "")
+                + f"\n[dim]Active mode: [bold]{mode}[/bold][/dim]\n"
+                f"[dim]  /sd image  — switch to AUTOMATIC1111 + restart Open-WebUI[/dim]\n"
+                f"[dim]  /sd video  — switch to ComfyUI     + restart Open-WebUI[/dim]\n"
+                f"[dim]  /sd stop   — stop all SD services (free VRAM for LLMs)[/dim]",
+                title="[cyan]SD status[/cyan]",
+                border_style="cyan",
+                expand=False,
+            ))
+
     else:
         return False
 
@@ -1183,6 +1633,7 @@ def run_repl(
         "offline": False,
         "cfg": cfg,
         "budget": budget,
+        "sd_mode": cfg.get("sd_mode", "image"),
     }
 
     messages: list = []
@@ -1190,6 +1641,7 @@ def run_repl(
         messages.append({"role": "system", "content": system})
 
     print_header(model, pipeline, tools_on, budget, offline=False)
+    print_startup_banner(model)
 
     while True:
         try:
@@ -1280,12 +1732,32 @@ def main() -> None:
         "generate CLAUDE.md and update README.md using claude-sonnet",
     )
     parser.add_argument("--version", action="version", version=f"clod {__version__}")
+    parser.add_argument(
+        "--auto-model",
+        action="store_true",
+        help="Auto-select model based on detected GPU VRAM",
+    )
     args = parser.parse_args()
 
     model = args.model
     pipeline = args.pipeline or cfg.get("pipeline")
     system = args.system
     tools_on = args.tools
+
+    if args.auto_model or cfg.get("auto_model"):
+        gpu = query_gpu_vram()
+        if gpu:
+            rec = recommend_model_for_vram(gpu["total_mb"])
+            if rec and rec != model:
+                console.print(Panel(
+                    f"[bold]{gpu['name']}[/bold]  {gpu['total_mb']:,} MiB total  •  "
+                    f"{gpu['free_mb']:,} MiB free\n"
+                    f"[dim]Auto-selected:[/dim] [bold cyan]{rec}[/bold cyan]",
+                    title="[cyan]GPU auto-model[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                ))
+                model = rec
 
     # Index mode
     if args.index is not None:

@@ -207,7 +207,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
-      - name: Run integration tests
+      - name: Run integration tests (clod.py subprocess + test_exe skipped on Linux)
         run: pytest tests/integration/ -v --tb=short
       - name: Download Windows EXE (for failure artifact)
         if: failure()
@@ -223,11 +223,32 @@ jobs:
           path: failed-artifacts/clod.exe
           retention-days: 14
 
+  exe-tests:
+    name: EXE Integration Tests (Windows)
+    runs-on: windows-latest
+    needs: [versioner, build-windows]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Download Windows EXE artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event_name == 'pull_request' && format('clod-pr-{0}', github.event.pull_request.number) || format('clod-windows-{0}', needs.versioner.outputs.version) }}
+          path: dist/
+      - name: Run EXE integration tests
+        run: pytest tests/integration/test_exe.py -v --tb=short
+        env:
+          CLOD_EXE: dist\clod.exe
+
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [versioner, integration-tests]
-    if: github.event_name != 'pull_request' && needs.integration-tests.result == 'success'
+    needs: [versioner, integration-tests, exe-tests]
+    if: github.event_name != 'pull_request' && needs.integration-tests.result == 'success' && needs.exe-tests.result == 'success'
     steps:
       - uses: actions/checkout@v6
       - name: Download all artifacts
