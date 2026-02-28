@@ -3,7 +3,6 @@ name: 🤖 clod Build & Release
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
     inputs:
       version:
@@ -22,11 +21,8 @@ env:
   PACKAGE_NAME: clod
   PYTHON_VERSION: "3.11"
 
-# ── Jobs ───────────────────────────────────────────────────────────────────────
-
 jobs:
 
-  # ── Determine version ────────────────────────────────────────────────────────
   versioner:
     name: 📋 Determine Version
     runs-on: ubuntu-latest
@@ -36,7 +32,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - id: version
         run: |
           if [[ -n "${{ inputs.version }}" ]]; then
@@ -47,140 +42,91 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
 
-  # ── Lint ─────────────────────────────────────────────────────────────────────
   lint:
     name: 🔍 Lint & Format Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-
-      - name: Install linters
-        run: pip install pylint black
-
-      - name: Install clod runtime deps
-        run: pip install -r requirements.txt
-
-      - name: black format check
-        run: black --check --line-length 100 clod.py tests/
-
-      - name: pylint
-        run: |
+      - run: pip install pylint black
+      - run: pip install -r requirements.txt
+      - run: black --check --line-length 100 clod.py tests/
+      - run: |
           pylint clod.py \
             --disable=C0114,C0115,C0116 \
             --max-line-length=100 \
             --fail-under=7.0
 
-  # ── Test ─────────────────────────────────────────────────────────────────────
-  test:
-    name: 🧪 Run Tests
+  unit-tests:
+    name: 🧪 Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-cov
-
-      - name: Run tests
-        run: pytest tests/test_clod.py -v --cov=clod --cov-report=xml --cov-report=term-missing
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pytest tests/unit/ tests/test_clod.py -v --tb=short --cov=clod --cov-report=xml --cov-report=term-missing
+      - uses: codecov/codecov-action@v3
         with:
           file: ./coverage.xml
-          flags: clod
+          flags: unit
           fail_ci_if_error: false
 
-  # ── Build Windows EXE ────────────────────────────────────────────────────────
   build-windows:
     name: 🪟 Build Windows EXE
     runs-on: windows-latest
-    needs: versioner
+    needs: [versioner, unit-tests]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-
-      - name: Install dependencies + PyInstaller
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
-
-      - name: Build clod.exe
-        run: |
-          pyinstaller `
-            --onefile `
-            --console `
-            --name clod `
-            clod.py
-
-      - name: Verify binary
-        run: dist\clod.exe --version
-
-      - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt pyinstaller
+      - run: python -m PyInstaller clod.spec --noconfirm
+      - run: dist\clod.exe --version
+      - uses: actions/upload-artifact@v4
         with:
           name: clod-windows-${{ needs.versioner.outputs.version }}
           path: dist/clod.exe
-          retention-days: 5
+          retention-days: 30
 
-  # ── Build Linux AppImage ──────────────────────────────────────────────────────
   build-linux:
     name: 🐧 Build Linux AppImage
     runs-on: ubuntu-latest
-    needs: versioner
+    needs: [versioner, unit-tests]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
-
-      - name: Build Linux binary with PyInstaller
-        run: |
+      - run: pip install -r requirements.txt pyinstaller
+      - run: |
           pyinstaller \
             --onefile \
             --console \
             --name clod \
+            --collect-all rich \
             clod.py
-
-      - name: Verify binary
-        run: ./dist/clod --version
-
+      - run: ./dist/clod --version
       - name: Download linuxdeploy
         run: |
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage
-
       - name: Create AppImage
         run: |
           mkdir -p AppDir/usr/bin \
                    AppDir/usr/share/applications \
                    AppDir/usr/share/icons/hicolor/256x256/apps
-
           cp dist/clod AppDir/usr/bin/
-
-          cat > AppDir/usr/share/applications/clod.desktop <<'EOF'
+          cat > AppDir/usr/share/applications/clod.desktop <<'DESKTOP'
           [Desktop Entry]
           Type=Application
           Name=clod
@@ -189,9 +135,7 @@ jobs:
           Icon=clod
           Categories=Development;Utility;
           Terminal=true
-          EOF
-
-          # Placeholder icon (32x32 red square PNG) — replace with real icon later
+          DESKTOP
           python3 -c "
           import struct, zlib
           def png_chunk(name, data):
@@ -202,48 +146,65 @@ jobs:
           compressed = zlib.compress(raw * h)
           png = b'\\x89PNG\\r\\n\\x1a\\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + png_chunk(b'IDAT', compressed) + png_chunk(b'IEND', b'')
           open('AppDir/usr/share/icons/hicolor/256x256/apps/clod.png', 'wb').write(png)
-          print('icon written')
           "
-
           ARCH=x86_64 ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --executable AppDir/usr/bin/clod \
             --desktop-file AppDir/usr/share/applications/clod.desktop \
             --output appimage
-
           mv clod*.AppImage clod.AppImage 2>/dev/null || mv *clod*.AppImage clod.AppImage
-          ls -lah clod.AppImage
-
-      - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: clod-linux-${{ needs.versioner.outputs.version }}
           path: clod.AppImage
-          retention-days: 5
+          retention-days: 30
 
-  # ── GitHub Release ────────────────────────────────────────────────────────────
+  integration-tests:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+    needs: [build-windows]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run integration tests
+        run: pytest tests/integration/ -v --tb=short
+      - name: Download Windows EXE (for failure artifact)
+        if: failure()
+        uses: actions/download-artifact@v4
+        with:
+          name: clod-windows-${{ needs.versioner.outputs.version }}
+          path: failed-artifacts/
+      - name: Upload EXE as failure artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clod-integration-failure-${{ github.run_number }}
+          path: failed-artifacts/clod.exe
+          retention-days: 14
+
   release:
     name: 🚀 Create GitHub Release
-    needs: [versioner, build-windows, build-linux]
+    needs: [versioner, build-windows, build-linux, integration-tests]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: needs.integration-tests.result == 'success'
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts/
-
       - name: Gather release files
         run: |
           mkdir -p release-files
           find release-artifacts -type f \( -name "clod.exe" -o -name "clod.AppImage" \) \
             -exec cp {} release-files/ \;
           ls -lah release-files/
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -259,6 +220,8 @@ jobs:
             - Interactive REPL with conversation history
             - Tool use: bash execution, file read/write, SearXNG web search
             - Two-stage pipelines: local LLM draft → Claude review
+            - Token budget tracking with offline mode
+            - Project indexer: generates CLAUDE.md + README.md via local model
             - Rich markdown rendering with streaming output
 
             ### 📥 Downloads
@@ -276,19 +239,13 @@ jobs:
             ./clod.AppImage --help
             ```
 
-            Or run directly from the repo:
-            ```bash
-            pip install requests rich prompt_toolkit
-            python clod.py --help
-            ```
-
             ### Usage
             ```
             clod                           # interactive REPL
             clod -p "explain quicksort"    # one-shot
             clod --pipeline code_review    # local Qwen → Claude review
             clod --tools -p "list files"   # with tool use
-            clod --model claude-sonnet     # use cloud model via LiteLLM
+            clod --index C:\projects       # generate CLAUDE.md for all projects
             ```
 
             ### Info
@@ -297,4 +254,4 @@ jobs:
           files: release-files/*
           generate_release_notes: false
           draft: false
-          prerelease: ${{ github.ref != 'refs/heads/main' }}
+          prerelease: false

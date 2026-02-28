@@ -298,3 +298,27 @@ docker-compose stop <service>
 docker volume rm omni_<service>_data
 docker-compose up -d <service>
 ```
+
+---
+
+## Screenshots
+
+### Help
+
+![help](screenshots/help.png)
+
+### Header — default
+
+![header default](screenshots/header_default.png)
+
+### Header — pipeline active
+
+![header pipeline](screenshots/header_pipeline.png)
+
+### Header — token budget warning (45%)
+
+![header tokens](screenshots/header_tokens.png)
+
+### Header — offline mode (86% used)
+
+![header offline](screenshots/header_offline.png)
