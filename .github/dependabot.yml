@@ -1,0 +1,57 @@
+version: 2
+
+updates:
+
+  # Python dependencies
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    groups:
+      # Batch minor/patch updates for dev tools to reduce PR noise
+      dev-tools:
+        patterns:
+          - "pytest*"
+          - "coverage*"
+          - "black"
+          - "pylint"
+          - "bandit*"
+          - "pip-audit"
+          - "responses"
+        update-types:
+          - minor
+          - patch
+
+  # Docker images (docker-compose.yml)
+  # Dependabot pins floating tags (latest/main) to SHA digests and keeps
+  # those digests current. For semver tags it suggests version bumps.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    groups:
+      # Batch all docker image digest/version bumps into one PR per week
+      docker-images:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
