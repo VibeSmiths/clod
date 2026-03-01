@@ -21,6 +21,7 @@ a = Analysis(
     binaries=[],
     datas=unicode_data_files,
     hiddenimports=[
+        "mcp_server",
         "rich",
         "rich._unicode_data",
         "rich._unicode_data._versions",

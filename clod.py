@@ -49,6 +49,7 @@ CLOUD_MODEL_PREFIXES = ("claude-", "gpt-", "o1-", "o3-", "gemini-", "groq-", "to
 
 SD_WEBUI_URL = "http://localhost:7860"  # AUTOMATIC1111 WebUI (stable-diffusion container)
 COMFYUI_URL = "http://localhost:8188"   # ComfyUI video service
+MCP_SERVER_PORT = 8765                  # MCP filesystem server (localhost only)
 
 SONNET_MODEL = "claude-sonnet-4-6"
 
@@ -259,6 +260,7 @@ def load_config() -> dict:
         "compose_file": str(pathlib.Path(__file__).parent / "docker-compose.yml"),
         "dotenv_file":  str(pathlib.Path(__file__).parent / ".env"),
         "sd_mode":      "image",   # last-active SD mode: "image" | "video"
+        "mcp_port":     MCP_SERVER_PORT,
     }
     path = config_path()
     if path.exists():
@@ -728,7 +730,54 @@ def comfyui_docker_action_video(action: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-def print_startup_banner(model: str) -> None:
+def _prompt_mcp_access(cfg: dict) -> tuple[bool, str]:
+    """
+    Interactively ask whether to enable the MCP filesystem server for this session.
+    Returns (enabled: bool, directory: str).
+    """
+    default_dir = str(pathlib.Path.cwd().resolve())
+    console.print(Panel(
+        "[bold]MCP Filesystem Server[/bold]\n"
+        "Grants the LLM read/write/delete access to files on your system via HTTP.\n"
+        f"[dim]Default directory: {default_dir}[/dim]",
+        title="[cyan]MCP access[/cyan]",
+        border_style="cyan",
+        expand=False,
+    ))
+    try:
+        answer = console.input(
+            "[cyan]Enable MCP filesystem access for this session?[/cyan] [dim][y/N][/dim] "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False, default_dir
+    if answer not in ("y", "yes"):
+        return False, default_dir
+    try:
+        dir_input = console.input(
+            f"[cyan]Directory[/cyan] [dim][{default_dir}][/dim]: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        return False, default_dir
+    chosen = dir_input if dir_input else default_dir
+    chosen_path = pathlib.Path(chosen).expanduser().resolve()
+    if not chosen_path.is_dir():
+        console.print(f"[red]Not a directory: {chosen_path} — MCP disabled.[/red]")
+        return False, default_dir
+    return True, str(chosen_path)
+
+
+def start_mcp_server(directory: str, port: int) -> Optional[object]:
+    """Start the MCP filesystem server. Returns httpd instance or None on error."""
+    try:
+        import mcp_server
+        httpd = mcp_server.start(port=port, directory=directory)
+        return httpd
+    except Exception as e:
+        console.print(f"[red]MCP server failed to start: {e}[/red]")
+        return None
+
+
+def print_startup_banner(model: str, mcp_dir: Optional[str] = None, mcp_port: int = 0) -> None:
     """Print a hardware-aware startup panel with model recommendation."""
     sys_info = query_system_info()
     gpu = query_gpu_vram()
@@ -760,6 +809,13 @@ def print_startup_banner(model: str) -> None:
         )
     else:
         lines.append("[bold]GPU[/bold]  [dim]not detected (CPU-only)[/dim]")
+
+    # MCP filesystem server
+    if mcp_dir and mcp_port:
+        lines.append(
+            f"[bold]MCP[/bold]  [green]running[/green]  localhost:{mcp_port}  "
+            f"[dim]{mcp_dir}[/dim]"
+        )
 
     # Recommendation
     lines.append("")
@@ -1252,6 +1308,7 @@ def print_help() -> None:
                     "  [yellow]/save [/yellow][dim]<file>[/dim]            save conversation to JSON",
                     "  [yellow]/index [/yellow][dim][path][/dim]           index projects: generate CLAUDE.md + README",
                     "  [yellow]/gpu[/yellow]                     show GPU VRAM + optimal model recommendation",
+                    "  [yellow]/mcp[/yellow]                     show MCP filesystem server status and endpoints",
                     "  [yellow]/sd [/yellow][dim][image|video|stop|start][/dim]  switch image/video mode or stop/start SD",
                     "  [yellow]/help[/yellow]                    show this message",
                     "  [yellow]/exit[/yellow] or [yellow]/quit[/yellow]            exit clod",
@@ -1486,6 +1543,29 @@ def handle_slash(
         else:
             run_index_mode(path, session_state["cfg"])
 
+    elif verb == "/mcp":
+        httpd = session_state.get("mcp_httpd")
+        mcp_dir = session_state.get("mcp_dir")
+        port = session_state["cfg"].get("mcp_port", MCP_SERVER_PORT)
+        if httpd and mcp_dir:
+            console.print(Panel(
+                f"[green]Running[/green]  localhost:{port}\n"
+                f"  Directory: [bold]{mcp_dir}[/bold]\n\n"
+                f"[bold cyan]Endpoints:[/bold cyan]\n"
+                f"  GET    http://localhost:{port}/list          list files\n"
+                f"  GET    http://localhost:{port}/<file>        read file\n"
+                f"  POST   http://localhost:{port}/<file>        write file (raw body)\n"
+                f"  DELETE http://localhost:{port}/<file>        delete file",
+                title="[cyan]MCP Filesystem[/cyan]",
+                border_style="cyan",
+                expand=False,
+            ))
+        else:
+            console.print(
+                "[dim]MCP filesystem server is not running.  "
+                "Start a new session to enable it.[/dim]"
+            )
+
     elif verb == "/gpu":
         gpu = query_gpu_vram()
         if gpu is None:
@@ -1521,7 +1601,7 @@ def handle_slash(
 
         if sub in ("image", "video"):
             # ── Mode switch ───────────────────────────────────────────────
-            current = session_state.get("sd_mode", cfg.get("sd_mode", "image"))
+            current = session_state.get("sd_mode", session_state["cfg"].get("sd_mode", "image"))
             if sub == current:
                 console.print(f"[dim]Already in [bold]{sub}[/bold] mode.[/dim]")
             else:
@@ -1634,6 +1714,8 @@ def run_repl(
         "cfg": cfg,
         "budget": budget,
         "sd_mode": cfg.get("sd_mode", "image"),
+        "mcp_httpd": None,
+        "mcp_dir": None,
     }
 
     messages: list = []
@@ -1641,7 +1723,31 @@ def run_repl(
         messages.append({"role": "system", "content": system})
 
     print_header(model, pipeline, tools_on, budget, offline=False)
-    print_startup_banner(model)
+
+    # MCP filesystem server — prompt before banner so banner can show status
+    mcp_dir: Optional[str] = None
+    mcp_port = cfg.get("mcp_port", MCP_SERVER_PORT)
+    if sys.stdin.isatty():
+        mcp_on, chosen_dir = _prompt_mcp_access(cfg)
+        if mcp_on:
+            httpd = start_mcp_server(chosen_dir, mcp_port)
+            if httpd:
+                mcp_dir = chosen_dir
+                session_state["mcp_httpd"] = httpd
+                session_state["mcp_dir"] = mcp_dir
+                # Inject filesystem context into the conversation system prompt
+                mcp_ctx = (
+                    f"Filesystem access is available via MCP at http://localhost:{mcp_port}. "
+                    f"Working directory: {mcp_dir}. "
+                    f"Endpoints: GET /list (list files), GET /<file> (read file), "
+                    f"POST /<file> with raw body (write file), DELETE /<file> (delete file)."
+                )
+                if messages and messages[0]["role"] == "system":
+                    messages[0]["content"] += f"\n\n{mcp_ctx}"
+                else:
+                    messages.insert(0, {"role": "system", "content": mcp_ctx})
+
+    print_startup_banner(model, mcp_dir=mcp_dir, mcp_port=mcp_port if mcp_dir else 0)
 
     while True:
         try:
