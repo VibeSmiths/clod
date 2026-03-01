@@ -1,5 +1,5 @@
 """
-OmniAI — Claude Review Pipeline
+AI — Claude Review Pipeline
 ================================
 Legacy / direct-Claude shortcut pipeline. Set SKIP_LOCAL="true" for a
 pure Claude call, or leave as default for local draft → Claude review.
@@ -43,7 +43,7 @@ class Pipeline:
         )
 
     def __init__(self):
-        self.name = "OmniAI Claude Review"
+        self.name = "AI Claude Review"
         self.type = "pipe"
         self.id = "claude_review"
         self.valves = self.Valves(

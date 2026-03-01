@@ -1,4 +1,4 @@
-# Omni — Local AI Stack
+# Local AI Stack
 
 A self-hosted, GPU-accelerated AI stack built on Docker. Local LLMs handle initial
 drafts via Ollama; Claude (via LiteLLM gateway) provides final review and improvement.
@@ -70,10 +70,10 @@ Select a pipeline from the **model selector** in OpenWebUI (top of the chat wind
 
 | Pipeline | Stage 1 (Local) | Stage 2 (Claude) | Best for |
 |----------|----------------|------------------|----------|
-| **OmniAI Code Review** | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Code generation, debugging, architecture |
-| **OmniAI Reasoning Review** | `deepseek-r1:14b` | `claude-sonnet` | Analysis, planning, research |
-| **OmniAI Chat Assist** | `llama3.1:8b` | `claude-haiku` | General Q&A, writing, conversation |
-| **OmniAI Claude Review** | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Legacy pipeline — same as Code Review |
+| **AI Code Review** | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Code generation, debugging, architecture |
+| **AI Reasoning Review** | `deepseek-r1:14b` | `claude-sonnet` | Analysis, planning, research |
+| **AI Chat Assist** | `llama3.1:8b` | `claude-haiku` | General Q&A, writing, conversation |
+| **AI Claude Review** | `qwen2.5-coder:32b-instruct-q4_K_M` | `claude-sonnet` | Legacy pipeline — same as Code Review |
 
 ### Configuring a Pipeline
 
@@ -131,7 +131,7 @@ Pull models with `docker exec -it ollama ollama pull <model>`:
 
 ## clod — Local AI CLI
 
-`clod.exe` (Windows) is a terminal CLI that talks directly to the local Omni stack.
+`clod.exe` (Windows) is a terminal CLI that talks directly to the local AI stack.
 It mirrors the Claude CLI experience but routes through Ollama and the pipelines service.
 
 ### Usage
@@ -321,7 +321,7 @@ docker exec -it ollama ollama stop qwen2.5-coder:32b-instruct-q4_K_M
 **Reset a service's data volume:**
 ```bash
 docker-compose stop <service>
-docker volume rm omni_<service>_data
+docker volume rm <service>_data
 docker-compose up -d <service>
 ```
 

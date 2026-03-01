@@ -1,5 +1,5 @@
 """
-OmniAI — Reasoning Review Pipeline
+AI — Reasoning Review Pipeline
 Stage 1: deepseek-r1:14b (local Ollama) — deep analysis, chain-of-thought
 Stage 2: claude-sonnet (via LiteLLM)    — senior architect structures and refines output
 """
@@ -35,7 +35,7 @@ class Pipeline:
         )
 
     def __init__(self):
-        self.name = "OmniAI Reasoning Review"
+        self.name = "AI Reasoning Review"
         self.type = "pipe"
         self.id = "reason_review"
         self.valves = self.Valves(

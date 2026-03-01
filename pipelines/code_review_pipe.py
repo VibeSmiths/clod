@@ -1,5 +1,5 @@
 """
-OmniAI — Code Review Pipeline
+AI — Code Review Pipeline
 Stage 1: qwen2.5-coder:32b (local Ollama) — generates code solution
 Stage 2: claude-sonnet (via LiteLLM)      — senior engineer review
 """
@@ -36,7 +36,7 @@ class Pipeline:
         )
 
     def __init__(self):
-        self.name = "OmniAI Code Review"
+        self.name = "AI Code Review"
         self.type = "pipe"
         self.id = "code_review"
         self.valves = self.Valves(

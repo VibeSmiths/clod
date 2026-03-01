@@ -47,7 +47,24 @@ if [ "$DIFF_LINES" -gt 1000 ]; then
     exit 0
 fi
 
-# ── 4. Run Claude in one-shot mode ────────────────────────────────────────────
+# ── 4. Auto-format Python files with black ────────────────────────────────────
+PY_STAGED=$(echo "$STAGED" | grep '\.py$' || true)
+if [ -n "$PY_STAGED" ]; then
+    if command -v python &>/dev/null && python -m black --version &>/dev/null 2>&1; then
+        echo "[pre-commit] black formatting staged .py files..."
+        # shellcheck disable=SC2086
+        python -m black $PY_STAGED
+        # shellcheck disable=SC2086
+        git add -- $PY_STAGED
+        # Recompute diff after black so Claude sees clean code
+        DIFF=$(git diff --cached)
+        DIFF_LINES=$(echo "$DIFF" | wc -l)
+    else
+        echo "[pre-commit] black not available — skipping auto-format"
+    fi
+fi
+
+# ── 5. Run Claude in one-shot mode ────────────────────────────────────────────
 echo "[pre-commit] Claude reviewing staged changes (${DIFF_LINES} diff lines)..."
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -86,7 +103,7 @@ Apply fixes now using your file editing tools. Work from the repo root: $REPO_RO
 PROMPT
 )" || echo "[pre-commit] Claude exited with an error — committing as-is"
 
-# ── 5. Re-stage any files Claude may have modified ────────────────────────────
+# ── 6. Re-stage any files Claude may have modified ────────────────────────────
 # shellcheck disable=SC2086
 echo "$STAGED" | tr '\n' '\0' | xargs -0 git add --
 
