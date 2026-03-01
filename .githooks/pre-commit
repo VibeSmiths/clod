@@ -33,6 +33,20 @@ if [ -z "$STAGED" ]; then
     exit 0
 fi
 
+# ── 4. Auto-format Python files with black (always, regardless of diff size) ──
+PY_STAGED=$(echo "$STAGED" | grep '\.py$' || true)
+if [ -n "$PY_STAGED" ]; then
+    if command -v python &>/dev/null && python -m black --version &>/dev/null 2>&1; then
+        echo "[pre-commit] black formatting staged .py files..."
+        # shellcheck disable=SC2086
+        python -m black $PY_STAGED
+        # shellcheck disable=SC2086
+        git add -- $PY_STAGED
+    else
+        echo "[pre-commit] black not available — skipping auto-format"
+    fi
+fi
+
 DIFF=$(git diff --cached)
 
 # Skip if diff is empty (e.g., only deletions staged)
@@ -45,23 +59,6 @@ DIFF_LINES=$(echo "$DIFF" | wc -l)
 if [ "$DIFF_LINES" -gt 1000 ]; then
     echo "[pre-commit] Diff is ${DIFF_LINES} lines — too large for automated review, skipping"
     exit 0
-fi
-
-# ── 4. Auto-format Python files with black ────────────────────────────────────
-PY_STAGED=$(echo "$STAGED" | grep '\.py$' || true)
-if [ -n "$PY_STAGED" ]; then
-    if command -v python &>/dev/null && python -m black --version &>/dev/null 2>&1; then
-        echo "[pre-commit] black formatting staged .py files..."
-        # shellcheck disable=SC2086
-        python -m black $PY_STAGED
-        # shellcheck disable=SC2086
-        git add -- $PY_STAGED
-        # Recompute diff after black so Claude sees clean code
-        DIFF=$(git diff --cached)
-        DIFF_LINES=$(echo "$DIFF" | wc -l)
-    else
-        echo "[pre-commit] black not available — skipping auto-format"
-    fi
 fi
 
 # ── 5. Run Claude in one-shot mode ────────────────────────────────────────────

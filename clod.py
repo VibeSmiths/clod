@@ -692,16 +692,16 @@ _GITHUB_RAW_BASE = "https://raw.githubusercontent.com/VibeSmiths/clod/main"
 # All files that docker-compose needs as bind-mounts (relative to clod root).
 # Ordered: docker-compose.yml first so nothing else is attempted without it.
 _LOCAL_CONFIGS: dict[str, str] = {
-    "docker-compose.yml":              "docker-compose.yml",
-    "litellm/config.yaml":             "litellm/config.yaml",
-    "searxng/settings.yml":            "searxng/settings.yml",
-    "perplexica/config.toml":          "perplexica/config.toml",
-    "nginx/nginx.conf":                "nginx/nginx.conf",
-    "pipelines/code_review_pipe.py":   "pipelines/code_review_pipe.py",
+    "docker-compose.yml": "docker-compose.yml",
+    "litellm/config.yaml": "litellm/config.yaml",
+    "searxng/settings.yml": "searxng/settings.yml",
+    "perplexica/config.toml": "perplexica/config.toml",
+    "nginx/nginx.conf": "nginx/nginx.conf",
+    "pipelines/code_review_pipe.py": "pipelines/code_review_pipe.py",
     "pipelines/reason_review_pipe.py": "pipelines/reason_review_pipe.py",
-    "pipelines/chat_assist_pipe.py":   "pipelines/chat_assist_pipe.py",
+    "pipelines/chat_assist_pipe.py": "pipelines/chat_assist_pipe.py",
     "pipelines/claude_review_pipe.py": "pipelines/claude_review_pipe.py",
-    ".env.example":                    ".env.example",
+    ".env.example": ".env.example",
 }
 
 # Config files that belong to each docker service (for targeted restore during reset)
@@ -788,10 +788,9 @@ def _ensure_local_configs(
         failed.append(rel)
 
     if restored or failed:
-        lines = (
-            [f"  [green]+[/green] {p}" for p in restored]
-            + [f"  [red]x[/red] {p}  [dim](restore manually)[/dim]" for p in failed]
-        )
+        lines = [f"  [green]+[/green] {p}" for p in restored] + [
+            f"  [red]x[/red] {p}  [dim](restore manually)[/dim]" for p in failed
+        ]
         console_obj.print(
             Panel(
                 "\n".join(lines),
@@ -862,7 +861,9 @@ def _offer_docker_startup(cfg: dict, missing: list, console_obj: Console) -> boo
             expand=False,
         )
     )
-    ans = console_obj.input("[yellow]Start core docker services now? [Y/n] [/yellow]").strip().lower()
+    ans = (
+        console_obj.input("[yellow]Start core docker services now? [Y/n] [/yellow]").strip().lower()
+    )
     if ans in ("n", "no"):
         return False
 
@@ -890,7 +891,9 @@ def _offer_docker_startup(cfg: dict, missing: list, console_obj: Console) -> boo
 
     # Poll until healthy or timeout
     deadline = time.time() + 90
-    with Live("[dim]Waiting for services to come up…[/dim]", console=console_obj, refresh_per_second=2) as live:
+    with Live(
+        "[dim]Waiting for services to come up…[/dim]", console=console_obj, refresh_per_second=2
+    ) as live:
         while time.time() < deadline:
             health = _check_service_health(cfg)
             still_down = [s for s in missing if not health.get(s, False)]
@@ -913,7 +916,12 @@ def _offer_docker_startup(cfg: dict, missing: list, console_obj: Console) -> boo
         + [f"  [red]●[/red] {s} timed out" for s in still_down]
     )
     console_obj.print(
-        Panel(result_lines or "[dim]No change[/dim]", title="[cyan]Service startup[/cyan]", border_style="cyan", expand=False)
+        Panel(
+            result_lines or "[dim]No change[/dim]",
+            title="[cyan]Service startup[/cyan]",
+            border_style="cyan",
+            expand=False,
+        )
     )
     return final_health.get("ollama", False)
 
@@ -940,7 +948,9 @@ def _setup_env_wizard(cfg: dict) -> dict:
 
     # GPU driver
     console.print("\n[bold]GPU driver[/bold]  (affects Ollama and Stable Diffusion containers)")
-    console.print("  [dim]1[/dim] nvidia  (CUDA)   [dim]2[/dim] amd  (ROCm)   [dim]3[/dim] cpu  (no GPU)")
+    console.print(
+        "  [dim]1[/dim] nvidia  (CUDA)   [dim]2[/dim] amd  (ROCm)   [dim]3[/dim] cpu  (no GPU)"
+    )
     try:
         gpu_choice = console.input("[cyan]GPU driver [1/2/3, default 1]: [/cyan]").strip()
     except (EOFError, KeyboardInterrupt):
@@ -970,7 +980,10 @@ def _setup_env_wizard(cfg: dict) -> dict:
         "\n[bold]LiteLLM master key[/bold]  [dim](internal service auth; keep default unless you need to change it)[/dim]"
     )
     try:
-        litellm_key = console.input("[cyan]LITELLM_MASTER_KEY [default: sk-local-dev]: [/cyan]").strip() or "sk-local-dev"
+        litellm_key = (
+            console.input("[cyan]LITELLM_MASTER_KEY [default: sk-local-dev]: [/cyan]").strip()
+            or "sk-local-dev"
+        )
     except (EOFError, KeyboardInterrupt):
         litellm_key = "sk-local-dev"
 
@@ -1106,9 +1119,7 @@ def _reset_service(
 
     # Stop
     try:
-        r = subprocess.run(
-            base_cmd + ["stop", service], capture_output=True, text=True, timeout=30
-        )
+        r = subprocess.run(base_cmd + ["stop", service], capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             console_obj.print(f"  [yellow]stop warning: {r.stderr.strip()}[/yellow]")
     except Exception as e:
@@ -1135,9 +1146,11 @@ def _reset_service(
         if delete_mode == "all":
             should_delete = True
         elif delete_mode == "each":
-            ans = console_obj.input(
-                f"  [yellow]Delete [bold]{p}[/bold]? [y/N] [/yellow]"
-            ).strip().lower()
+            ans = (
+                console_obj.input(f"  [yellow]Delete [bold]{p}[/bold]? [y/N] [/yellow]")
+                .strip()
+                .lower()
+            )
             should_delete = ans in ("y", "yes")
         if should_delete:
             try:
@@ -2338,9 +2351,11 @@ def handle_slash(
         elif sub == "stop":
             # ── Stop all core services ────────────────────────────────────
             compose = cfg.get("compose_file", "")
-            confirm = console.input(
-                "[yellow]Stop ALL core docker services? [y/N] [/yellow]"
-            ).strip().lower()
+            confirm = (
+                console.input("[yellow]Stop ALL core docker services? [y/N] [/yellow]")
+                .strip()
+                .lower()
+            )
             if confirm in ("y", "yes"):
                 try:
                     r = subprocess.run(
@@ -2377,7 +2392,9 @@ def handle_slash(
 
             if not sub_arg:
                 # Interactive: list services and ask which to reset
-                svc_list = "\n".join(f"  [dim]{i+1}[/dim]  {s}" for i, s in enumerate(core_services))
+                svc_list = "\n".join(
+                    f"  [dim]{i+1}[/dim]  {s}" for i, s in enumerate(core_services)
+                )
                 console.print(
                     Panel(
                         "Choose a service to reset:\n" + svc_list + "\n\n"
@@ -2413,7 +2430,11 @@ def handle_slash(
                         expand=False,
                     )
                 )
-                dm_ans = console.input("[yellow]Delete mode [each/all/none, default each]: [/yellow]").strip().lower()
+                dm_ans = (
+                    console.input("[yellow]Delete mode [each/all/none, default each]: [/yellow]")
+                    .strip()
+                    .lower()
+                )
                 delete_mode = dm_ans if dm_ans in ("all", "none") else "each"
             else:
                 delete_mode = "each"
@@ -2421,8 +2442,16 @@ def handle_slash(
             # Execute reset(s)
             # Dependency order for full reset
             reset_order = [
-                "chroma", "n8n", "searxng", "perplexica-backend", "perplexica-frontend",
-                "tts", "pipelines", "litellm", "ollama", "open-webui",
+                "chroma",
+                "n8n",
+                "searxng",
+                "perplexica-backend",
+                "perplexica-frontend",
+                "tts",
+                "pipelines",
+                "litellm",
+                "ollama",
+                "open-webui",
             ]
             targets = reset_order if target_all else [single_svc]
 
@@ -2460,11 +2489,14 @@ def handle_slash(
                 for s in ("ollama", "litellm", "pipelines", "searxng", "chroma")
             )
             hint = ""
-            if any(not health.get(s) for s in ("ollama", "litellm", "pipelines", "searxng", "chroma")):
+            if any(
+                not health.get(s) for s in ("ollama", "litellm", "pipelines", "searxng", "chroma")
+            ):
                 hint = "\n[dim]  /services start        — start missing services[/dim]"
             console.print(
                 Panel(
-                    rows + hint
+                    rows
+                    + hint
                     + "\n\n[dim]  /services stop         — docker compose down[/dim]"
                     + "\n[dim]  /services reset [name] — wipe data and redeploy a service[/dim]"
                     + "\n[dim]  /services reset all    — reset all core services[/dim]",

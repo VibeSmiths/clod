@@ -14,7 +14,6 @@ import responses as resp_lib
 
 import clod
 
-
 # ── _parse_dotenv ──────────────────────────────────────────────────────────────
 
 
@@ -34,7 +33,7 @@ def test_parse_dotenv_skips_comments(tmp_path):
 
 def test_parse_dotenv_strips_quotes(tmp_path):
     env = tmp_path / ".env"
-    env.write_text('A="hello"\nB=\'world\'\n', encoding="utf-8")
+    env.write_text("A=\"hello\"\nB='world'\n", encoding="utf-8")
     result = clod._parse_dotenv(str(env))
     assert result == {"A": "hello", "B": "world"}
 
@@ -59,7 +58,13 @@ def _all_up():
 
 
 def _all_down():
-    return {"ollama": False, "litellm": False, "pipelines": False, "searxng": False, "chroma": False}
+    return {
+        "ollama": False,
+        "litellm": False,
+        "pipelines": False,
+        "searxng": False,
+        "chroma": False,
+    }
 
 
 def test_compute_features_all_healthy():
@@ -251,6 +256,7 @@ def test_get_clod_root_frozen(monkeypatch, tmp_path):
 
 class _SilentConsole:
     """Console stub that records print calls but suppresses output."""
+
     def __init__(self):
         self.printed = []
 
@@ -368,7 +374,9 @@ def test_ensure_local_configs_bundle_copy_exception_falls_to_github(tmp_path, mo
     monkeypatch.setattr(sys, "_MEIPASS", str(bundle_dir), raising=False)
     monkeypatch.setattr(sys, "executable", str(fake_exe), raising=False)
     # Make shutil.copy2 raise so the bundle path fails and GitHub is tried
-    monkeypatch.setattr(clod.shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(
+        clod.shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))
+    )
 
     resp_lib.add(
         resp_lib.GET,
@@ -405,6 +413,7 @@ def test_ensure_local_configs_github_request_exception(tmp_path):
 
 class _InputConsole(_SilentConsole):
     """Console stub with configurable input response."""
+
     def __init__(self, input_val="n"):
         super().__init__()
         self._input_val = input_val
@@ -461,7 +470,9 @@ def test_offer_docker_startup_generic_exception(tmp_path, monkeypatch, mock_cfg)
     compose.write_text("version: '3'")
     mock_cfg["compose_file"] = str(compose)
 
-    monkeypatch.setattr(clod.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        clod.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
     result = clod._offer_docker_startup(mock_cfg, ["ollama"], _InputConsole("y"))
     assert result is False
 
@@ -478,13 +489,18 @@ def test_setup_env_wizard_with_api_keys(tmp_path, monkeypatch):
     inputs = iter(["1", "sk-ant-test", "hf_test_token", ""])
 
     class _KeyedConsole:
-        def print(self, *a, **k): pass
-        def input(self, *a, **k): return next(inputs, "")
+        def print(self, *a, **k):
+            pass
+
+        def input(self, *a, **k):
+            return next(inputs, "")
 
     monkeypatch.setattr(clod, "console", _KeyedConsole())
     monkeypatch.setattr(clod, "save_config", lambda c: None)
     monkeypatch.setattr(clod.shutil, "copy2", lambda src, dst: pathlib.Path(dst).write_text(""))
-    monkeypatch.setattr(clod, "_ensure_local_configs", lambda *a, **k: {"restored": [], "failed": []})
+    monkeypatch.setattr(
+        clod, "_ensure_local_configs", lambda *a, **k: {"restored": [], "failed": []}
+    )
 
     result = clod._setup_env_wizard(cfg)
     assert env_target.exists()
@@ -501,13 +517,18 @@ def test_setup_env_wizard_write_exception(tmp_path, monkeypatch):
     inputs = iter(["", "", "", ""])
 
     class _C:
-        def print(self, *a, **k): pass
-        def input(self, *a, **k): return next(inputs, "")
+        def print(self, *a, **k):
+            pass
+
+        def input(self, *a, **k):
+            return next(inputs, "")
 
     monkeypatch.setattr(clod, "console", _C())
     monkeypatch.setattr(clod, "save_config", lambda c: None)
     # Make copy2 raise to trigger the except → return {} branch
-    monkeypatch.setattr(clod.shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(PermissionError("denied")))
+    monkeypatch.setattr(
+        clod.shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(PermissionError("denied"))
+    )
     # env_example does not exist so .exists() is False → write_text path
     # but we also need write_text to fail; patch write_text on the Path object
     original_write = pathlib.Path.write_text

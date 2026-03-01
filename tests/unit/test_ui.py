@@ -126,7 +126,13 @@ def test_print_startup_banner_with_health_some_down(monkeypatch, fake_console):
     monkeypatch.setattr(clod, "query_comfyui_running", lambda: False)
     monkeypatch.setattr(clod, "query_video_running", lambda: False)
 
-    health = {"ollama": True, "litellm": False, "pipelines": False, "searxng": False, "chroma": False}
+    health = {
+        "ollama": True,
+        "litellm": False,
+        "pipelines": False,
+        "searxng": False,
+        "chroma": False,
+    }
     clod.print_startup_banner("qwen2.5-coder:14b", health=health)
 
 

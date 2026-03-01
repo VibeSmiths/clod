@@ -196,17 +196,17 @@ def test_exe_clean_dir_seeds_config_files(tmp_path):
 
         # The exe may fail to reach Ollama (config files just restored, no service running),
         # but config files must have been seeded from the bundle.
-        assert (tmp_path / "docker-compose.yml").exists(), (
+        assert (
+            tmp_path / "docker-compose.yml"
+        ).exists(), (
             f"docker-compose.yml not created.\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
-        assert (tmp_path / "litellm" / "config.yaml").exists(), (
-            "litellm/config.yaml not seeded from bundle."
-        )
-        assert (tmp_path / "searxng" / "settings.yml").exists(), (
-            "searxng/settings.yml not seeded from bundle."
-        )
-        assert (tmp_path / ".env.example").exists(), (
-            ".env.example not seeded from bundle."
-        )
+        assert (
+            tmp_path / "litellm" / "config.yaml"
+        ).exists(), "litellm/config.yaml not seeded from bundle."
+        assert (
+            tmp_path / "searxng" / "settings.yml"
+        ).exists(), "searxng/settings.yml not seeded from bundle."
+        assert (tmp_path / ".env.example").exists(), ".env.example not seeded from bundle."
     finally:
         httpd.shutdown()
