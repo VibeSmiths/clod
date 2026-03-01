@@ -11,9 +11,6 @@ updates:
       time: "06:00"
       timezone: "UTC"
     open-pull-requests-limit: 10
-    labels:
-      - dependencies
-      - python
     groups:
       # Batch minor/patch updates for dev tools to reduce PR noise
       dev-tools:
@@ -40,9 +37,6 @@ updates:
       time: "06:00"
       timezone: "UTC"
     open-pull-requests-limit: 10
-    labels:
-      - dependencies
-      - docker
     groups:
       # Batch all docker image digest/version bumps into one PR per week
       docker-images:
@@ -61,6 +55,3 @@ updates:
       time: "06:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - github-actions
