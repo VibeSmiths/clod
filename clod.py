@@ -22,8 +22,10 @@ import os
 import pathlib
 import platform
 import re
+import shutil
 import subprocess
 import sys
+import time
 import urllib.parse
 from typing import Generator, Optional
 
@@ -258,8 +260,8 @@ def load_config() -> dict:
         "enable_tools": False,
         "token_budget": 100_000,  # session Claude token budget (input + output)
         "auto_model": False,
-        "compose_file": str(pathlib.Path(__file__).parent / "docker-compose.yml"),
-        "dotenv_file": str(pathlib.Path(__file__).parent / ".env"),
+        "compose_file": str(_get_clod_root() / "docker-compose.yml"),
+        "dotenv_file": str(_get_clod_root() / ".env"),
         "sd_mode": "image",  # last-active SD mode: "image" | "video"
         "mcp_port": MCP_SERVER_PORT,
     }
@@ -648,6 +650,528 @@ def update_dotenv_key(dotenv_path: str, key: str, value: str) -> bool:
         return False
 
 
+# ── Startup: env, service health, feature flags ────────────────────────────────
+
+
+def _parse_dotenv(path: str) -> dict:
+    """Parse a .env file into a dict. Returns {} if the file doesn't exist."""
+    result: dict = {}
+    try:
+        for line in pathlib.Path(path).read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, _, val = line.partition("=")
+                result[key.strip()] = val.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    return result
+
+
+# ── Exe-aware root path ────────────────────────────────────────────────────────
+
+
+def _get_clod_root() -> pathlib.Path:
+    """Return the directory that contains clod's runtime files (docker-compose, configs).
+
+    • Frozen (PyInstaller exe): directory containing the exe.
+    • Script mode: directory containing clod.py.
+    """
+    if getattr(sys, "frozen", False):
+        return pathlib.Path(sys.executable).parent
+    return pathlib.Path(__file__).parent
+
+
+# ── Config file inventory ──────────────────────────────────────────────────────
+
+_GITHUB_RAW_BASE = "https://raw.githubusercontent.com/VibeSmiths/clod/main"
+
+# All files that docker-compose needs as bind-mounts (relative to clod root).
+# Ordered: docker-compose.yml first so nothing else is attempted without it.
+_LOCAL_CONFIGS: dict[str, str] = {
+    "docker-compose.yml":              "docker-compose.yml",
+    "litellm/config.yaml":             "litellm/config.yaml",
+    "searxng/settings.yml":            "searxng/settings.yml",
+    "perplexica/config.toml":          "perplexica/config.toml",
+    "nginx/nginx.conf":                "nginx/nginx.conf",
+    "pipelines/code_review_pipe.py":   "pipelines/code_review_pipe.py",
+    "pipelines/reason_review_pipe.py": "pipelines/reason_review_pipe.py",
+    "pipelines/chat_assist_pipe.py":   "pipelines/chat_assist_pipe.py",
+    "pipelines/claude_review_pipe.py": "pipelines/claude_review_pipe.py",
+    ".env.example":                    ".env.example",
+}
+
+# Config files that belong to each docker service (for targeted restore during reset)
+_SERVICE_CONFIGS: dict[str, list[str]] = {
+    "litellm": ["litellm/config.yaml"],
+    "pipelines": [
+        "pipelines/code_review_pipe.py",
+        "pipelines/reason_review_pipe.py",
+        "pipelines/chat_assist_pipe.py",
+        "pipelines/claude_review_pipe.py",
+    ],
+    "searxng": ["searxng/settings.yml"],
+    "perplexica-backend": ["perplexica/config.toml"],
+    "perplexica-frontend": ["perplexica/config.toml"],
+    "nginx": ["nginx/nginx.conf"],
+}
+
+
+def _ensure_local_configs(
+    root: pathlib.Path,
+    online_ok: bool,
+    console_obj: Console,
+    targets: Optional[list] = None,
+) -> dict:
+    """
+    Restore missing local config files that docker-compose services need.
+
+    Resolution order for each missing file:
+      1. sys._MEIPASS bundle (offline-safe, always present when frozen)
+      2. GitHub raw fetch    (online, always current)
+      3. Warning             (could not restore)
+
+    Parameters
+    ----------
+    root        Directory to restore files into (usually _get_clod_root()).
+    online_ok   Whether network requests are permitted.
+    console_obj Rich Console for progress output.
+    targets     Subset of _LOCAL_CONFIGS keys to check; None = check all.
+
+    Returns
+    -------
+    {"restored": [paths], "failed": [paths]}
+    """
+    check = list(targets) if targets is not None else list(_LOCAL_CONFIGS)
+    missing = [p for p in check if p in _LOCAL_CONFIGS and not (root / p).exists()]
+
+    if not missing:
+        return {"restored": [], "failed": []}
+
+    restored: list[str] = []
+    failed: list[str] = []
+
+    for rel in missing:
+        dest = root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        # 1. PyInstaller bundle (sys._MEIPASS)
+        if getattr(sys, "frozen", False):
+            bundle_src = pathlib.Path(getattr(sys, "_MEIPASS", "")) / rel
+            if bundle_src.exists():
+                try:
+                    shutil.copy2(str(bundle_src), str(dest))
+                    console_obj.print(f"  [green]restored[/green] {rel} [dim](from bundle)[/dim]")
+                    restored.append(rel)
+                    continue
+                except Exception:
+                    pass
+
+        # 2. GitHub raw fetch
+        if online_ok:
+            gh_path = _LOCAL_CONFIGS[rel]
+            try:
+                r = requests.get(f"{_GITHUB_RAW_BASE}/{gh_path}", timeout=10)
+                if r.status_code == 200:
+                    dest.write_bytes(r.content)
+                    console_obj.print(f"  [green]restored[/green] {rel} [dim](from GitHub)[/dim]")
+                    restored.append(rel)
+                    continue
+            except Exception:
+                pass
+
+        # 3. Could not restore
+        console_obj.print(f"  [yellow][!] could not restore[/yellow] {rel}")
+        failed.append(rel)
+
+    if restored or failed:
+        lines = (
+            [f"  [green]+[/green] {p}" for p in restored]
+            + [f"  [red]x[/red] {p}  [dim](restore manually)[/dim]" for p in failed]
+        )
+        console_obj.print(
+            Panel(
+                "\n".join(lines),
+                title="[cyan]Config files[/cyan]",
+                border_style="cyan",
+                expand=False,
+            )
+        )
+
+    return {"restored": restored, "failed": failed}
+
+
+# Services and the features they gate
+_SERVICE_FEATURES: dict[str, str] = {
+    "ollama": "local inference",
+    "litellm": "cloud models (claude-*, gpt-*, …)",
+    "pipelines": "two-stage pipelines",
+    "searxng": "web search tool",
+    "chroma": "semantic recall",
+}
+
+
+def _check_service_health(cfg: dict) -> dict[str, bool]:
+    """HTTP health-check each core service. Returns {name: is_healthy}."""
+    checks: dict[str, bool] = {}
+    endpoints = {
+        "ollama": (f"{cfg.get('ollama_url', 'http://localhost:11434')}/api/tags", 3),
+        "litellm": (f"{cfg.get('litellm_url', 'http://localhost:4000')}/health", 3),
+        "pipelines": (f"{cfg.get('pipelines_url', 'http://localhost:9099')}/", 3),
+        "searxng": (f"{cfg.get('searxng_url', 'http://localhost:8080')}/healthz", 3),
+        "chroma": ("http://localhost:8000/api/v2/heartbeat", 3),
+    }
+    for name, (url, timeout) in endpoints.items():
+        try:
+            r = requests.get(url, timeout=timeout)
+            checks[name] = r.status_code < 500
+        except Exception:
+            checks[name] = False
+    return checks
+
+
+def _compute_features(env_vars: dict, health: dict) -> dict[str, bool]:
+    """Derive feature flags from env vars and service health. Pure function."""
+    return {
+        "cloud_models": health.get("litellm", False),
+        "web_search": health.get("searxng", False),
+        "semantic_recall": health.get("chroma", False),
+        "pipelines": health.get("pipelines", False),
+        "offline_default": not health.get("ollama", False),
+    }
+
+
+def _offer_docker_startup(cfg: dict, missing: list, console_obj: Console) -> bool:
+    """
+    Offer to start missing docker services via docker compose up -d.
+    Polls health for up to 90 s. Returns True if Ollama is healthy afterwards.
+    """
+    feature_lines = "\n".join(
+        f"  [red]●[/red] [bold]{svc}[/bold]  [dim]({_SERVICE_FEATURES.get(svc, '')})[/dim]"
+        for svc in missing
+    )
+    console_obj.print(
+        Panel(
+            f"The following services are not running:\n{feature_lines}\n\n"
+            "[dim]Run [bold]docker compose up -d[/bold] to start them?[/dim]",
+            title="[yellow]Services Offline[/yellow]",
+            border_style="yellow",
+            expand=False,
+        )
+    )
+    ans = console_obj.input("[yellow]Start core docker services now? [Y/n] [/yellow]").strip().lower()
+    if ans in ("n", "no"):
+        return False
+
+    compose = cfg.get("compose_file", "")
+    if not pathlib.Path(compose).exists():
+        console_obj.print(f"[red]docker-compose.yml not found at {compose}[/red]")
+        return False
+
+    try:
+        r = subprocess.run(
+            ["docker", "compose", "-f", compose, "up", "-d"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if r.returncode != 0:
+            console_obj.print(f"[red]docker compose up failed:\n{r.stderr.strip()}[/red]")
+            return False
+    except FileNotFoundError:
+        console_obj.print("[red]docker CLI not found. Install Docker Desktop and try again.[/red]")
+        return False
+    except Exception as e:
+        console_obj.print(f"[red]Failed to start services: {e}[/red]")
+        return False
+
+    # Poll until healthy or timeout
+    deadline = time.time() + 90
+    with Live("[dim]Waiting for services to come up…[/dim]", console=console_obj, refresh_per_second=2) as live:
+        while time.time() < deadline:
+            health = _check_service_health(cfg)
+            still_down = [s for s in missing if not health.get(s, False)]
+            up = [s for s in missing if health.get(s, False)]
+            status_lines = (
+                "  ".join(f"[green]●[/green] {s}" for s in up)
+                + ("  " if up and still_down else "")
+                + "  ".join(f"[yellow]◌[/yellow] {s}" for s in still_down)
+            )
+            live.update(f"[dim]Waiting…[/dim]  {status_lines}")
+            if not still_down:
+                break
+            time.sleep(3)
+
+    final_health = _check_service_health(cfg)
+    up_now = [s for s in missing if final_health.get(s, False)]
+    still_down = [s for s in missing if not final_health.get(s, False)]
+    result_lines = "\n".join(
+        [f"  [green]●[/green] {s} started" for s in up_now]
+        + [f"  [red]●[/red] {s} timed out" for s in still_down]
+    )
+    console_obj.print(
+        Panel(result_lines or "[dim]No change[/dim]", title="[cyan]Service startup[/cyan]", border_style="cyan", expand=False)
+    )
+    return final_health.get("ollama", False)
+
+
+def _setup_env_wizard(cfg: dict) -> dict:
+    """
+    Interactive first-run wizard: collect key settings and generate .env from .env.example.
+    Returns parsed env dict of the written file.
+    """
+    env_example = pathlib.Path(__file__).parent / ".env.example"
+    env_target = pathlib.Path(cfg.get("dotenv_file", str(pathlib.Path(__file__).parent / ".env")))
+
+    console.print(
+        Panel(
+            "[bold cyan]Welcome to clod![/bold cyan]\n\n"
+            "No [bold].env[/bold] file was found. This wizard will create one so the\n"
+            "docker-based services (Ollama, LiteLLM, SearXNG, …) are configured correctly.\n\n"
+            "[dim]Press [bold]Enter[/bold] to accept defaults. All fields are optional.[/dim]",
+            title="[cyan]First-Run Setup[/cyan]",
+            border_style="cyan",
+            expand=False,
+        )
+    )
+
+    # GPU driver
+    console.print("\n[bold]GPU driver[/bold]  (affects Ollama and Stable Diffusion containers)")
+    console.print("  [dim]1[/dim] nvidia  (CUDA)   [dim]2[/dim] amd  (ROCm)   [dim]3[/dim] cpu  (no GPU)")
+    try:
+        gpu_choice = console.input("[cyan]GPU driver [1/2/3, default 1]: [/cyan]").strip()
+    except (EOFError, KeyboardInterrupt):
+        gpu_choice = ""
+    gpu_driver = {"2": "amd", "3": "cpu"}.get(gpu_choice, "nvidia")
+
+    # Anthropic API key
+    console.print(
+        "\n[bold]Anthropic API key[/bold]  [dim](enables claude-* models via LiteLLM)[/dim]"
+    )
+    try:
+        anthropic_key = console.input("[cyan]ANTHROPIC_API_KEY (Enter to skip): [/cyan]").strip()
+    except (EOFError, KeyboardInterrupt):
+        anthropic_key = ""
+
+    # HuggingFace token
+    console.print(
+        "\n[bold]HuggingFace token[/bold]  [dim](for gated models like Llama; optional)[/dim]"
+    )
+    try:
+        hf_token = console.input("[cyan]HF_TOKEN (Enter to skip): [/cyan]").strip()
+    except (EOFError, KeyboardInterrupt):
+        hf_token = ""
+
+    # LiteLLM master key
+    console.print(
+        "\n[bold]LiteLLM master key[/bold]  [dim](internal service auth; keep default unless you need to change it)[/dim]"
+    )
+    try:
+        litellm_key = console.input("[cyan]LITELLM_MASTER_KEY [default: sk-local-dev]: [/cyan]").strip() or "sk-local-dev"
+    except (EOFError, KeyboardInterrupt):
+        litellm_key = "sk-local-dev"
+
+    # Copy template and apply values
+    try:
+        if env_example.exists():
+            shutil.copy2(str(env_example), str(env_target))
+        else:
+            env_target.write_text("", encoding="utf-8")
+    except Exception as e:
+        console.print(f"[red]Could not create .env: {e}[/red]")
+        return {}
+
+    dotenv_path = str(env_target)
+    update_dotenv_key(dotenv_path, "GPU_DRIVER", gpu_driver)
+    if anthropic_key:
+        update_dotenv_key(dotenv_path, "ANTHROPIC_API_KEY", anthropic_key)
+    if hf_token:
+        update_dotenv_key(dotenv_path, "HF_TOKEN", hf_token)
+    update_dotenv_key(dotenv_path, "LITELLM_MASTER_KEY", litellm_key)
+    # Keep litellm_key in config in sync
+    cfg["litellm_key"] = litellm_key
+    save_config(cfg)
+
+    console.print(
+        Panel(
+            f"[green]+[/green] Created [bold]{env_target}[/bold]\n\n"
+            "[dim]You can edit this file later and restart clod to pick up changes.\n"
+            "Run [bold]/services start[/bold] inside clod to bring up docker services.[/dim]",
+            title="[green]Setup Complete[/green]",
+            border_style="green",
+            expand=False,
+        )
+    )
+
+    # Restore any missing local config files now that we know the user is online-capable
+    console.print("[dim]Checking local config files…[/dim]")
+    _ensure_local_configs(
+        env_target.parent,
+        online_ok=bool(anthropic_key or hf_token),
+        console_obj=console,
+    )
+
+    return _parse_dotenv(dotenv_path)
+
+
+# ── Service reset / reconfig ───────────────────────────────────────────────────
+
+# Fallback volume map when docker-compose.yml cannot be parsed.
+# Keys match service names; values are env-var names whose paths to clean.
+_SERVICE_ENV_VOLUMES: dict[str, list[str]] = {
+    "ollama": ["OLLAMA_DATA_DIR"],
+    "litellm": [],
+    "pipelines": ["PIPELINES_DATA"],
+    "open-webui": ["OWUI_DATA_DIR"],
+    "searxng": ["SEARCH_DIR", "SEARXNG_CONFIG_DIR"],
+    "chroma": ["CHROMA_DATA"],
+    "n8n": ["N8N_DATA"],
+    "perplexica-backend": ["PERPLEXICA_UPLOADS", "PERPLEXICA_DB"],
+    "perplexica-frontend": [],
+    "tts": ["VOICES_DIR", "TTS_CONFIG_DIR"],
+}
+
+
+def _get_service_volumes(cfg: dict) -> dict[str, list[str]]:
+    """
+    Return {service_name: [host_bind_mount_path, ...]} by reading docker-compose.yml.
+    Falls back to env-var expansion from .env if YAML is unavailable.
+    """
+    result: dict[str, list[str]] = {}
+    compose_path = pathlib.Path(cfg.get("compose_file", ""))
+    env_vars = _parse_dotenv(cfg.get("dotenv_file", ""))
+
+    try:
+        import yaml  # type: ignore
+
+        with open(compose_path, encoding="utf-8") as f:
+            compose = yaml.safe_load(f)
+        services = compose.get("services", {})
+        for svc_name, svc_def in services.items():
+            paths: list[str] = []
+            for vol in svc_def.get("volumes", []):
+                # Long-form volume with type=bind
+                if isinstance(vol, dict) and vol.get("type") == "bind":
+                    src = vol.get("source", "")
+                    if src:
+                        paths.append(src)
+                # Short-form host:container
+                elif isinstance(vol, str) and ":" in vol:
+                    src = vol.split(":")[0]
+                    if src and not src.startswith(".") and src != "/":
+                        # Expand env vars like ${BASE_DIR}
+                        expanded = src
+                        for k, v in env_vars.items():
+                            expanded = expanded.replace(f"${{{k}}}", v).replace(f"${k}", v)
+                        if expanded != src or not expanded.startswith("$"):
+                            paths.append(expanded)
+            result[svc_name] = paths
+        return result
+    except Exception:
+        pass
+
+    # Fallback: resolve known env-var names
+    for svc, var_names in _SERVICE_ENV_VOLUMES.items():
+        paths = []
+        for var in var_names:
+            val = env_vars.get(var, "")
+            if val:
+                # Expand any ${BASE_DIR} references
+                for k, v in env_vars.items():
+                    val = val.replace(f"${{{k}}}", v).replace(f"${k}", v)
+                paths.append(val)
+        result[svc] = paths
+    return result
+
+
+def _reset_service(
+    service: str,
+    paths: list,
+    cfg: dict,
+    console_obj: Console,
+    delete_mode: str = "each",
+) -> bool:
+    """
+    Stop, remove, optionally wipe data, and redeploy a single service.
+    delete_mode: 'each' = prompt per path | 'all' = delete all | 'none' = skip deletion
+    Returns True on success.
+    """
+    compose = cfg.get("compose_file", "")
+    base_cmd = ["docker", "compose", "-f", compose]
+
+    console_obj.print(f"\n[cyan]Resetting [bold]{service}[/bold]…[/cyan]")
+
+    # Stop
+    try:
+        r = subprocess.run(
+            base_cmd + ["stop", service], capture_output=True, text=True, timeout=30
+        )
+        if r.returncode != 0:
+            console_obj.print(f"  [yellow]stop warning: {r.stderr.strip()}[/yellow]")
+    except Exception as e:
+        console_obj.print(f"  [yellow]stop warning: {e}[/yellow]")
+
+    # Remove container
+    try:
+        r = subprocess.run(
+            base_cmd + ["rm", "-f", service], capture_output=True, text=True, timeout=15
+        )
+        if r.returncode != 0:
+            console_obj.print(f"  [yellow]rm warning: {r.stderr.strip()}[/yellow]")
+    except Exception as e:
+        console_obj.print(f"  [yellow]rm warning: {e}[/yellow]")
+
+    # Optionally delete data directories
+    for path_str in paths:
+        if not path_str:
+            continue
+        p = pathlib.Path(path_str)
+        if not p.exists():
+            continue
+        should_delete = False
+        if delete_mode == "all":
+            should_delete = True
+        elif delete_mode == "each":
+            ans = console_obj.input(
+                f"  [yellow]Delete [bold]{p}[/bold]? [y/N] [/yellow]"
+            ).strip().lower()
+            should_delete = ans in ("y", "yes")
+        if should_delete:
+            try:
+                shutil.rmtree(str(p), ignore_errors=True)
+                console_obj.print(f"  [green]deleted[/green] {p}")
+            except Exception as e:
+                console_obj.print(f"  [red]error deleting {p}: {e}[/red]")
+
+    # Restore service-specific config files before redeploying
+    svc_configs = _SERVICE_CONFIGS.get(service, [])
+    if svc_configs:
+        root = _get_clod_root()
+        console_obj.print(f"  [dim]Checking config files for {service}…[/dim]")
+        _ensure_local_configs(root, online_ok=True, console_obj=console_obj, targets=svc_configs)
+
+    # Redeploy
+    try:
+        r = subprocess.run(
+            base_cmd + ["up", "-d", service], capture_output=True, text=True, timeout=120
+        )
+        if r.returncode != 0:
+            console_obj.print(f"  [red]up failed: {r.stderr.strip()}[/red]")
+            return False
+    except FileNotFoundError:
+        console_obj.print("  [red]docker CLI not found[/red]")
+        return False
+    except Exception as e:
+        console_obj.print(f"  [red]up error: {e}[/red]")
+        return False
+
+    console_obj.print(f"  [green]+ {service} redeployed[/green]")
+    return True
+
+
 def sd_switch_mode(to_mode: str, cfg: dict) -> tuple[bool, str]:
     """
     Switch the active SD mode ('image' | 'video') by:
@@ -796,7 +1320,12 @@ def start_mcp_server(directory: str, port: int) -> Optional[object]:
         return None
 
 
-def print_startup_banner(model: str, mcp_dir: Optional[str] = None, mcp_port: int = 0) -> None:
+def print_startup_banner(
+    model: str,
+    mcp_dir: Optional[str] = None,
+    mcp_port: int = 0,
+    health: Optional[dict] = None,
+) -> None:
     """Print a hardware-aware startup panel with model recommendation."""
     sys_info = query_system_info()
     gpu = query_gpu_vram()
@@ -838,6 +1367,20 @@ def print_startup_banner(model: str, mcp_dir: Optional[str] = None, mcp_port: in
             f"[dim]{mcp_dir}[/dim]"
         )
 
+    # Services
+    if health is not None:
+        dot_up = "[green]●[/green]"
+        dot_dn = "[red]●[/red]"
+        svc_parts = [
+            f"{dot_up if health.get(s) else dot_dn} {s}"
+            for s in ("ollama", "litellm", "pipelines", "searxng", "chroma")
+        ]
+        lines.append("[bold]Services[/bold]  " + "  ".join(svc_parts))
+        if any(not health.get(s) for s in ("ollama", "litellm", "pipelines", "searxng", "chroma")):
+            lines.append(
+                "[dim]  Some services offline — run [bold]/services start[/bold] to bring them up[/dim]"
+            )
+
     # Recommendation
     lines.append("")
     lines.append("[bold cyan]Recommendation[/bold cyan]")
@@ -845,7 +1388,7 @@ def print_startup_banner(model: str, mcp_dir: Optional[str] = None, mcp_port: in
     comfyui_on = img_on or vid_on
 
     if rec:
-        marker = "[green]✓[/green]" if rec == model else "[yellow]→[/yellow]"
+        marker = "[green]+[/green]" if rec == model else "[yellow]->[/yellow]"
         note = "" if rec == model else f"  [dim](run [bold]/model {rec}[/bold] to switch)[/dim]"
         lines.append(f"  {marker}  [bold]{rec}[/bold]{note}")
         if comfyui_on and gpu:
@@ -879,11 +1422,15 @@ def print_startup_banner(model: str, mcp_dir: Optional[str] = None, mcp_port: in
 # ── Backend Adapters ───────────────────────────────────────────────────────────
 
 
-def pick_adapter(model: str, pipeline: Optional[str], cfg: dict) -> str:
-    """Return adapter type: 'ollama', 'litellm', or 'pipeline'."""
+def pick_adapter(
+    model: str, pipeline: Optional[str], cfg: dict, features: Optional[dict] = None
+) -> str:
+    """Return adapter type: 'ollama', 'litellm', 'pipeline', or 'cloud_unavailable'."""
     if pipeline:
         return "pipeline"
     if any(model.startswith(p) for p in CLOUD_MODEL_PREFIXES):
+        if features is not None and not features.get("cloud_models", True):
+            return "cloud_unavailable"
         return "litellm"
     return "ollama"
 
@@ -1333,6 +1880,10 @@ def print_help() -> None:
                     "  [yellow]/gpu[/yellow]                     show GPU VRAM + optimal model recommendation",
                     "  [yellow]/mcp[/yellow]                     show MCP filesystem server status and endpoints",
                     "  [yellow]/sd [/yellow][dim][image|video|stop|start][/dim]  switch image/video mode or stop/start SD",
+                    "  [yellow]/services[/yellow]               show docker service health status",
+                    "  [yellow]/services start[/yellow]         start missing core services via docker compose",
+                    "  [yellow]/services stop[/yellow]          stop all core services (docker compose down)",
+                    "  [yellow]/services reset [/yellow][dim][name|all][/dim]  wipe data and redeploy service(s)",
                     "  [yellow]/help[/yellow]                    show this message",
                     "  [yellow]/exit[/yellow] or [yellow]/quit[/yellow]            exit clod",
                     "",
@@ -1421,7 +1972,25 @@ def infer(
             model = cfg["default_model"]
             console.print(f"[dim][offline] using local model: {model}[/dim]")
 
-    adapter = pick_adapter(model, pipeline, cfg)
+    features = session_state.get("features") if session_state else None
+    adapter = pick_adapter(model, pipeline, cfg, features)
+
+    if adapter == "cloud_unavailable":
+        console.print(
+            Panel(
+                "[yellow]LiteLLM is not running — cloud models unavailable.[/yellow]\n\n"
+                "Options:\n"
+                "  • [bold]/services start[/bold] — start docker services\n"
+                f"  • Falling back to local model: [bold]{cfg['default_model']}[/bold]",
+                title="[yellow]⚠ Cloud Unavailable[/yellow]",
+                border_style="yellow",
+                expand=False,
+            )
+        )
+        model = cfg["default_model"]
+        pipeline = None
+        adapter = "ollama"
+
     tools = TOOL_DEFINITIONS if (tools_on and adapter == "ollama") else None
     uses_claude = adapter in ("litellm", "pipeline")
 
@@ -1509,6 +2078,12 @@ def handle_slash(
             session_state["pipeline"] = None
             console.print("[dim]Pipeline disabled.[/dim]")
         elif arg:
+            feats = session_state.get("features", {})
+            if not feats.get("pipelines", True):
+                console.print(
+                    "[yellow]⚠ Pipelines service is not running — this pipeline will fail.\n"
+                    "  Run [bold]/services start[/bold] to enable it.[/yellow]"
+                )
             session_state["pipeline"] = arg
             console.print(f"[dim]Pipeline → [bold]{arg}[/bold][/dim]")
         else:
@@ -1519,6 +2094,12 @@ def handle_slash(
         if arg.lower() in ("on", "true", "1", ""):
             session_state["tools_on"] = True
             console.print("[dim]Tools [green]enabled[/green][/dim]")
+            feats = session_state.get("features", {})
+            if not feats.get("web_search", True):
+                console.print(
+                    "[yellow]⚠ SearXNG is not running — web search tool will be unavailable.\n"
+                    "  Run [bold]/services start[/bold] to enable it.[/yellow]"
+                )
         elif arg.lower() in ("off", "false", "0"):
             session_state["tools_on"] = False
             console.print("[dim]Tools [dim]disabled[/dim][/dim]")
@@ -1730,6 +2311,169 @@ def handle_slash(
                 )
             )
 
+    elif verb == "/services":
+        cfg = session_state["cfg"]
+        sub_parts = arg.strip().split(None, 2)
+        sub = sub_parts[0].lower() if sub_parts else ""
+        sub_arg = sub_parts[1].lower() if len(sub_parts) > 1 else ""
+        sub_arg2 = sub_parts[2] if len(sub_parts) > 2 else ""
+
+        if sub == "start":
+            # ── Start missing services ────────────────────────────────────
+            health = _check_service_health(cfg)
+            missing = [s for s, up in health.items() if not up]
+            if not missing:
+                console.print("[green]All core services are running.[/green]")
+            else:
+                if _offer_docker_startup(cfg, missing, console):
+                    health = _check_service_health(cfg)
+                    session_state["features"] = _compute_features(
+                        _parse_dotenv(cfg.get("dotenv_file", "")), health
+                    )
+                    session_state["health"] = health
+                    if session_state["features"].get("offline_default") is False:
+                        session_state["offline"] = False
+                    console.print("[dim]Feature flags updated.[/dim]")
+
+        elif sub == "stop":
+            # ── Stop all core services ────────────────────────────────────
+            compose = cfg.get("compose_file", "")
+            confirm = console.input(
+                "[yellow]Stop ALL core docker services? [y/N] [/yellow]"
+            ).strip().lower()
+            if confirm in ("y", "yes"):
+                try:
+                    r = subprocess.run(
+                        ["docker", "compose", "-f", compose, "down"],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    if r.returncode == 0:
+                        console.print("[green]Services stopped.[/green]")
+                        health = {s: False for s in _SERVICE_FEATURES}
+                        session_state["features"] = _compute_features({}, health)
+                        session_state["health"] = health
+                        session_state["offline"] = True
+                    else:
+                        console.print(f"[red]docker compose down failed:\n{r.stderr.strip()}[/red]")
+                except Exception as e:
+                    console.print(f"[red]Error: {e}[/red]")
+
+        elif sub == "reset":
+            # ── Reset / reconfig ──────────────────────────────────────────
+            compose = cfg.get("compose_file", "")
+            if not pathlib.Path(compose).exists():
+                console.print(f"[red]docker-compose.yml not found at {compose}[/red]")
+                return True
+
+            volumes = _get_service_volumes(cfg)
+            core_services = list(_SERVICE_ENV_VOLUMES.keys())
+
+            # Determine target: all or single service
+            target_all = sub_arg == "all"
+            force_yes = sub_arg2 == "--yes" or sub_arg == "--yes"
+            single_svc = sub_arg if (sub_arg and sub_arg not in ("all", "--yes")) else ""
+
+            if not sub_arg:
+                # Interactive: list services and ask which to reset
+                svc_list = "\n".join(f"  [dim]{i+1}[/dim]  {s}" for i, s in enumerate(core_services))
+                console.print(
+                    Panel(
+                        "Choose a service to reset:\n" + svc_list + "\n\n"
+                        "[dim]Or run [bold]/services reset all[/bold] to reset everything[/dim]",
+                        title="[cyan]Reset Service[/cyan]",
+                        border_style="cyan",
+                        expand=False,
+                    )
+                )
+                choice = console.input("[cyan]Service name or number: [/cyan]").strip()
+                if choice.isdigit():
+                    idx = int(choice) - 1
+                    single_svc = core_services[idx] if 0 <= idx < len(core_services) else ""
+                else:
+                    single_svc = choice
+
+            if not target_all and not single_svc:
+                console.print("[yellow]No service selected.[/yellow]")
+                return True
+
+            # Choose deletion strategy
+            if force_yes:
+                delete_mode = "all"
+            elif target_all:
+                console.print(
+                    Panel(
+                        "How should data directories be handled?\n\n"
+                        "  [bold]each[/bold]  — prompt for each directory (default)\n"
+                        "  [bold]all[/bold]   — delete all data without further prompts\n"
+                        "  [bold]none[/bold]  — stop/remove/redeploy without deleting data",
+                        title="[yellow]Data Volume Deletion[/yellow]",
+                        border_style="yellow",
+                        expand=False,
+                    )
+                )
+                dm_ans = console.input("[yellow]Delete mode [each/all/none, default each]: [/yellow]").strip().lower()
+                delete_mode = dm_ans if dm_ans in ("all", "none") else "each"
+            else:
+                delete_mode = "each"
+
+            # Execute reset(s)
+            # Dependency order for full reset
+            reset_order = [
+                "chroma", "n8n", "searxng", "perplexica-backend", "perplexica-frontend",
+                "tts", "pipelines", "litellm", "ollama", "open-webui",
+            ]
+            targets = reset_order if target_all else [single_svc]
+
+            results: list[str] = []
+            for svc in targets:
+                if svc not in volumes:
+                    console.print(f"[yellow]Unknown service: {svc}[/yellow]")
+                    continue
+                ok = _reset_service(svc, volumes.get(svc, []), cfg, console, delete_mode)
+                results.append(f"{'[green]+[/green]' if ok else '[red]x[/red]'} {svc}")
+
+            # Re-check health and update features
+            new_health = _check_service_health(cfg)
+            session_state["features"] = _compute_features(
+                _parse_dotenv(cfg.get("dotenv_file", "")), new_health
+            )
+            session_state["health"] = new_health
+
+            console.print(
+                Panel(
+                    "\n".join(results) if results else "[dim]Nothing reset[/dim]",
+                    title="[cyan]Reset Summary[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                )
+            )
+
+        else:
+            # ── Status ────────────────────────────────────────────────────
+            health = _check_service_health(cfg)
+            session_state["health"] = health
+            dot = {True: "[green]●[/green]", False: "[red]●[/red]"}
+            rows = "\n".join(
+                f"  {dot[health.get(s, False)]}  [bold]{s:<14}[/bold]  {_SERVICE_FEATURES.get(s, '')}"
+                for s in ("ollama", "litellm", "pipelines", "searxng", "chroma")
+            )
+            hint = ""
+            if any(not health.get(s) for s in ("ollama", "litellm", "pipelines", "searxng", "chroma")):
+                hint = "\n[dim]  /services start        — start missing services[/dim]"
+            console.print(
+                Panel(
+                    rows + hint
+                    + "\n\n[dim]  /services stop         — docker compose down[/dim]"
+                    + "\n[dim]  /services reset [name] — wipe data and redeploy a service[/dim]"
+                    + "\n[dim]  /services reset all    — reset all core services[/dim]",
+                    title="[cyan]Services[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                )
+            )
+
     else:
         return False
 
@@ -1742,23 +2486,29 @@ def run_repl(
     system: Optional[str],
     tools_on: bool,
     cfg: dict,
+    features: Optional[dict] = None,
+    health: Optional[dict] = None,
 ) -> None:
     history_path().parent.mkdir(parents=True, exist_ok=True)
     session = PromptSession(history=FileHistory(str(history_path())))
 
     budget = TokenBudget(cfg.get("token_budget", 100_000))
 
+    offline_default = (features or {}).get("offline_default", False)
+
     session_state = {
         "model": model,
         "pipeline": pipeline,
         "tools_on": tools_on,
         "system": system,
-        "offline": False,
+        "offline": offline_default,
         "cfg": cfg,
         "budget": budget,
         "sd_mode": cfg.get("sd_mode", "image"),
         "mcp_httpd": None,
         "mcp_dir": None,
+        "features": features or {},
+        "health": health or {},
     }
 
     messages: list = []
@@ -1790,7 +2540,12 @@ def run_repl(
                 else:
                     messages.insert(0, {"role": "system", "content": mcp_ctx})
 
-    print_startup_banner(model, mcp_dir=mcp_dir, mcp_port=mcp_port if mcp_dir else 0)
+    print_startup_banner(
+        model,
+        mcp_dir=mcp_dir,
+        mcp_port=mcp_port if mcp_dir else 0,
+        health=session_state.get("health") or None,
+    )
 
     while True:
         try:
@@ -1845,6 +2600,22 @@ def run_oneshot(
 
 def main() -> None:
     cfg = load_config()
+
+    # ── Restore missing local config files (docker-compose.yml, litellm/, …) ─
+    _clod_root = _get_clod_root()
+    _ensure_local_configs(_clod_root, online_ok=True, console_obj=console)
+    # Re-apply compose_file in case it was just restored
+    if not pathlib.Path(cfg.get("compose_file", "nonexistent")).exists():
+        cfg["compose_file"] = str(_clod_root / "docker-compose.yml")
+
+    # ── Environment and service health setup ──────────────────────────────────
+    env_path = pathlib.Path(cfg.get("dotenv_file", ""))
+    env_vars = _parse_dotenv(str(env_path))
+    if not env_path.exists() and sys.stdin.isatty():
+        env_vars = _setup_env_wizard(cfg)
+
+    health = _check_service_health(cfg)
+    features = _compute_features(env_vars, health)
 
     parser = argparse.ArgumentParser(
         prog="clod",
@@ -1931,8 +2702,14 @@ def main() -> None:
             run_oneshot(prompt, model, pipeline, system, tools_on, cfg)
         return
 
-    # Interactive REPL
-    run_repl(model, pipeline, system, tools_on, cfg)
+    # Interactive REPL — offer to start missing docker services first
+    missing = [svc for svc, up in health.items() if not up]
+    if missing:
+        if _offer_docker_startup(cfg, missing, console):
+            health = _check_service_health(cfg)
+            features = _compute_features(env_vars, health)
+
+    run_repl(model, pipeline, system, tools_on, cfg, features=features, health=health)
 
 
 if __name__ == "__main__":

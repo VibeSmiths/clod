@@ -103,3 +103,38 @@ def test_print_tool_result_exact_limit(fake_console):
 def test_print_tool_result_empty(fake_console):
     """Empty result string handled without error."""
     clod.print_tool_result("write_file", "")
+
+
+# ── print_startup_banner with health ──────────────────────────────────────────
+
+
+def test_print_startup_banner_with_health_all_up(monkeypatch, fake_console):
+    """Passing a health dict with all services up shows green dots in banner."""
+    monkeypatch.setattr(clod, "query_system_info", lambda: None)
+    monkeypatch.setattr(clod, "query_gpu_vram", lambda: None)
+    monkeypatch.setattr(clod, "query_comfyui_running", lambda: False)
+    monkeypatch.setattr(clod, "query_video_running", lambda: False)
+
+    health = {"ollama": True, "litellm": True, "pipelines": True, "searxng": True, "chroma": True}
+    clod.print_startup_banner("qwen2.5-coder:14b", health=health)
+
+
+def test_print_startup_banner_with_health_some_down(monkeypatch, fake_console):
+    """When some services are down, the 'services offline' hint line is shown."""
+    monkeypatch.setattr(clod, "query_system_info", lambda: None)
+    monkeypatch.setattr(clod, "query_gpu_vram", lambda: None)
+    monkeypatch.setattr(clod, "query_comfyui_running", lambda: False)
+    monkeypatch.setattr(clod, "query_video_running", lambda: False)
+
+    health = {"ollama": True, "litellm": False, "pipelines": False, "searxng": False, "chroma": False}
+    clod.print_startup_banner("qwen2.5-coder:14b", health=health)
+
+
+def test_print_startup_banner_no_health(monkeypatch, fake_console):
+    """Passing health=None omits the services section (backward compat)."""
+    monkeypatch.setattr(clod, "query_system_info", lambda: None)
+    monkeypatch.setattr(clod, "query_gpu_vram", lambda: None)
+    monkeypatch.setattr(clod, "query_comfyui_running", lambda: False)
+    monkeypatch.setattr(clod, "query_video_running", lambda: False)
+
+    clod.print_startup_banner("qwen2.5-coder:14b", health=None)

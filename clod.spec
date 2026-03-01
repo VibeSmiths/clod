@@ -15,11 +15,26 @@ unicode_data_files = [
     if f.endswith(".py")
 ]
 
+# Config files that docker-compose services need as bind-mounts.
+# Bundled so the exe can restore them offline on first run.
+config_datas = [
+    ('docker-compose.yml',              '.'),
+    ('litellm/config.yaml',             'litellm'),
+    ('searxng/settings.yml',            'searxng'),
+    ('perplexica/config.toml',          'perplexica'),
+    ('nginx/nginx.conf',                'nginx'),
+    ('pipelines/code_review_pipe.py',   'pipelines'),
+    ('pipelines/reason_review_pipe.py', 'pipelines'),
+    ('pipelines/chat_assist_pipe.py',   'pipelines'),
+    ('pipelines/claude_review_pipe.py', 'pipelines'),
+    ('.env.example',                    '.'),
+]
+
 a = Analysis(
     ['clod.py'],
     pathex=[],
     binaries=[],
-    datas=unicode_data_files,
+    datas=unicode_data_files + config_datas,
     hiddenimports=[
         "mcp_server",
         "rich",

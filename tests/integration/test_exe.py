@@ -15,6 +15,7 @@ import http.server
 import json
 import os
 import pathlib
+import shutil
 import socketserver
 import subprocess
 import sys
@@ -163,5 +164,49 @@ def test_exe_oneshot_mock_ollama(tmp_path):
             result.returncode == 0
         ), f"Non-zero exit.\nstdout: {result.stdout}\nstderr: {result.stderr}"
         assert len((result.stdout + result.stderr).strip()) > 0
+    finally:
+        httpd.shutdown()
+
+
+def test_exe_clean_dir_seeds_config_files(tmp_path):
+    """
+    When the exe runs from a completely clean directory, _ensure_local_configs
+    should seed docker-compose.yml and service config files from the bundle.
+
+    Strategy:
+      1. Copy clod.exe to an isolated temp directory (so _get_clod_root() = tmp_path).
+      2. Run in -p (oneshot) mode — non-interactive, so no TTY prompts.
+      3. Assert that docker-compose.yml and at least one service config file
+         were created next to the exe.
+    """
+    exe_copy = tmp_path / "clod.exe"
+    shutil.copy2(str(CLOD_EXE), str(exe_copy))
+
+    httpd, base_url = _start_mock_ollama()
+    try:
+        env = _make_cfg_env(tmp_path, {"ollama_url": base_url})
+        result = subprocess.run(
+            [str(exe_copy), "-p", "hello"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        combined = result.stdout + result.stderr
+
+        # The exe may fail to reach Ollama (config files just restored, no service running),
+        # but config files must have been seeded from the bundle.
+        assert (tmp_path / "docker-compose.yml").exists(), (
+            f"docker-compose.yml not created.\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert (tmp_path / "litellm" / "config.yaml").exists(), (
+            "litellm/config.yaml not seeded from bundle."
+        )
+        assert (tmp_path / "searxng" / "settings.yml").exists(), (
+            "searxng/settings.yml not seeded from bundle."
+        )
+        assert (tmp_path / ".env.example").exists(), (
+            ".env.example not seeded from bundle."
+        )
     finally:
         httpd.shutdown()

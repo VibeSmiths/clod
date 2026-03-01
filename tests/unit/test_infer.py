@@ -265,3 +265,44 @@ def test_infer_tool_call_adds_messages(monkeypatch, fake_console, mock_cfg):
     tool_msgs = [m for m in messages if m["role"] == "tool"]
     assert tool_msgs[0]["content"] == "file content"
     assert tool_msgs[0]["name"] == "read_file"
+
+
+# ── cloud_unavailable gate ─────────────────────────────────────────────────────
+
+
+def test_infer_cloud_unavailable_falls_back_to_local(monkeypatch, fake_console, mock_cfg):
+    """When cloud_models feature is off and a cloud model is requested,
+    infer falls back to the local default model and uses ollama."""
+    _patch_ensure(monkeypatch)
+    _patch_stream_and_render(monkeypatch, [("fallback response", [])])
+
+    session_state = {
+        "features": {"cloud_models": False},
+    }
+
+    result = clod.infer(
+        [{"role": "user", "content": "hi"}],
+        "claude-sonnet",
+        None,
+        {**mock_cfg, "default_model": "qwen2.5-coder:14b"},
+        False,
+        session_state=session_state,
+    )
+    assert result == "fallback response"
+
+
+def test_infer_cloud_available_uses_litellm(monkeypatch, fake_console, mock_cfg):
+    """When cloud_models feature is True, cloud model uses litellm adapter."""
+    _patch_stream_and_render(monkeypatch, [("cloud response", [])])
+
+    session_state = {"features": {"cloud_models": True}}
+
+    result = clod.infer(
+        [{"role": "user", "content": "hi"}],
+        "claude-sonnet",
+        None,
+        mock_cfg,
+        False,
+        session_state=session_state,
+    )
+    assert result == "cloud response"

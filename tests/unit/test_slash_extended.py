@@ -383,3 +383,42 @@ def test_slash_sd_status_with_gpu(monkeypatch, fake_console, mock_cfg):
     )
     state = _make_state(mock_cfg)
     handle_slash("/sd", state, [])
+
+
+# ── Feature gate warnings ──────────────────────────────────────────────────────
+
+
+def test_slash_pipeline_warns_when_pipelines_down(fake_console, mock_cfg):
+    """/pipeline <name> with features.pipelines=False prints a warning."""
+    state = _make_state(mock_cfg)
+    state["features"] = {"pipelines": False}
+    result = handle_slash("/pipeline code_review", state, [])
+    assert result is True
+    assert state["pipeline"] == "code_review"
+
+
+def test_slash_pipeline_no_warn_when_pipelines_up(fake_console, mock_cfg):
+    """/pipeline <name> with features.pipelines=True sets pipeline silently."""
+    state = _make_state(mock_cfg)
+    state["features"] = {"pipelines": True}
+    result = handle_slash("/pipeline code_review", state, [])
+    assert result is True
+    assert state["pipeline"] == "code_review"
+
+
+def test_slash_tools_warns_when_searxng_down(fake_console, mock_cfg):
+    """/tools on with features.web_search=False prints a SearXNG warning."""
+    state = _make_state(mock_cfg)
+    state["features"] = {"web_search": False}
+    result = handle_slash("/tools on", state, [])
+    assert result is True
+    assert state["tools_on"] is True
+
+
+def test_slash_tools_no_warn_when_searxng_up(fake_console, mock_cfg):
+    """/tools on with features.web_search=True enables tools silently."""
+    state = _make_state(mock_cfg)
+    state["features"] = {"web_search": True}
+    result = handle_slash("/tools on", state, [])
+    assert result is True
+    assert state["tools_on"] is True
