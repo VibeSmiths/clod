@@ -227,9 +227,7 @@ def test_sd_switch_mode_image_to_image_always_video_to_image(monkeypatch, tmp_pa
 
 def test_comfyui_docker_action_video_no_container(monkeypatch):
     """When docker ps returns no container, returns (False, not found message)."""
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **k: _MockResult(returncode=0, stdout="")
-    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _MockResult(returncode=0, stdout=""))
     ok, msg = clod.comfyui_docker_action_video("stop")
     assert ok is False
     assert "not found" in msg

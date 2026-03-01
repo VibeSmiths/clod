@@ -153,16 +153,15 @@ def test_exe_help_mentions_pipeline():
     assert "pipeline" in (result.stdout + result.stderr).lower()
 
 
-
 def test_exe_oneshot_mock_ollama(tmp_path):
     """EXE -p oneshot exits 0 and produces output against a mock Ollama server."""
     httpd, base_url = _start_mock_ollama()
     try:
         env = _make_cfg_env(tmp_path, {"ollama_url": base_url})
         result = _run_exe(["-p", "hi"], env=env, timeout=30)
-        assert result.returncode == 0, (
-            f"Non-zero exit.\nstdout: {result.stdout}\nstderr: {result.stderr}"
-        )
+        assert (
+            result.returncode == 0
+        ), f"Non-zero exit.\nstdout: {result.stdout}\nstderr: {result.stderr}"
         assert len((result.stdout + result.stderr).strip()) > 0
     finally:
         httpd.shutdown()

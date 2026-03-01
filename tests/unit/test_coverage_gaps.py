@@ -25,7 +25,6 @@ import responses as resp_lib
 import clod
 from clod import TokenBudget
 
-
 # ── Mock console for tool tests ────────────────────────────────────────────────
 
 
@@ -52,9 +51,7 @@ def test_tool_bash_exec_stderr_captured(monkeypatch):
     console = _YesConsole()
 
     def fake_run(*a, **k):
-        return subprocess.CompletedProcess(
-            args=a, returncode=0, stdout="", stderr="some warning"
-        )
+        return subprocess.CompletedProcess(args=a, returncode=0, stdout="", stderr="some warning")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = clod.tool_bash_exec({"command": "cmd"}, console)
@@ -170,10 +167,7 @@ def test_ollama_pull_success_with_progress(fake_console):
 @resp_lib.activate
 def test_ollama_pull_success_status_only(fake_console):
     """Events with only status (no total/completed) use the simple display."""
-    body = (
-        b'{"status": "verifying sha256 digest"}\n'
-        b'{"status": "success"}\n'
-    )
+    body = b'{"status": "verifying sha256 digest"}\n' b'{"status": "success"}\n'
     resp_lib.add(resp_lib.POST, "http://localhost:11434/api/pull", body=body)
     printed = []
     fake_console.print = lambda *a, **k: printed.append(str(a))
@@ -254,17 +248,10 @@ def test_stream_ollama_skips_invalid_json_lines(mock_cfg):
 @resp_lib.activate
 def test_stream_openai_compat_skips_empty_lines(mock_cfg):
     """Empty lines in SSE stream are silently skipped (line 975)."""
-    body = (
-        b"\n"
-        b'data: {"choices": [{"delta": {"content": "hi"}}]}\n'
-        b"\n"
-        b"data: [DONE]\n"
-    )
+    body = b"\n" b'data: {"choices": [{"delta": {"content": "hi"}}]}\n' b"\n" b"data: [DONE]\n"
     resp_lib.add(resp_lib.POST, "http://localhost:4000/v1/chat/completions", body=body)
 
-    events = list(
-        clod.stream_openai_compat([], "model", "http://localhost:4000", "key")
-    )
+    events = list(clod.stream_openai_compat([], "model", "http://localhost:4000", "key"))
     tokens = [e for e in events if e["type"] == "token"]
     assert any(e["text"] == "hi" for e in tokens)
 
@@ -280,9 +267,7 @@ def test_stream_openai_compat_skips_non_data_lines(mock_cfg):
     )
     resp_lib.add(resp_lib.POST, "http://localhost:4000/v1/chat/completions", body=body)
 
-    events = list(
-        clod.stream_openai_compat([], "model", "http://localhost:4000", "key")
-    )
+    events = list(clod.stream_openai_compat([], "model", "http://localhost:4000", "key"))
     tokens = [e for e in events if e["type"] == "token"]
     assert any(e["text"] == "hello" for e in tokens)
 
@@ -297,9 +282,7 @@ def test_stream_openai_compat_skips_invalid_json(mock_cfg):
     )
     resp_lib.add(resp_lib.POST, "http://localhost:4000/v1/chat/completions", body=body)
 
-    events = list(
-        clod.stream_openai_compat([], "model", "http://localhost:4000", "key")
-    )
+    events = list(clod.stream_openai_compat([], "model", "http://localhost:4000", "key"))
     tokens = [e for e in events if e["type"] == "token"]
     assert any(e["text"] == "world" for e in tokens)
 
@@ -400,13 +383,9 @@ def test_write_with_status_exception(monkeypatch, fake_console, tmp_path):
 
 def test_infer_check_token_thresholds_called(monkeypatch, fake_console, mock_cfg):
     """check_token_thresholds is called when uses_claude and session_state are set."""
-    monkeypatch.setattr(
-        clod, "stream_and_render", lambda gen: ("claude answer", [])
-    )
+    monkeypatch.setattr(clod, "stream_and_render", lambda gen: ("claude answer", []))
     thresholds_called = []
-    monkeypatch.setattr(
-        clod, "check_token_thresholds", lambda b, s: thresholds_called.append(True)
-    )
+    monkeypatch.setattr(clod, "check_token_thresholds", lambda b, s: thresholds_called.append(True))
 
     budget = TokenBudget(100_000)
     session_state = {

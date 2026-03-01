@@ -205,7 +205,8 @@ class MockResult:
 def test_query_gpu_vram_success(monkeypatch):
     """Parses nvidia-smi CSV output into name/total_mb/free_mb."""
     monkeypatch.setattr(
-        subprocess, "run",
+        subprocess,
+        "run",
         lambda *a, **k: MockResult(returncode=0, stdout="RTX 4070 Ti SUPER, 16376, 6000\n"),
     )
     info = clod.query_gpu_vram()
@@ -216,8 +217,10 @@ def test_query_gpu_vram_success(monkeypatch):
 
 def test_query_gpu_vram_unavailable(monkeypatch):
     """Returns None when nvidia-smi is not found."""
+
     def _raise(*a, **k):
         raise FileNotFoundError()
+
     monkeypatch.setattr(subprocess, "run", _raise)
     assert clod.query_gpu_vram() is None
 
@@ -225,7 +228,8 @@ def test_query_gpu_vram_unavailable(monkeypatch):
 def test_query_gpu_vram_nonzero_returncode(monkeypatch):
     """Returns None when nvidia-smi exits with non-zero code."""
     monkeypatch.setattr(
-        subprocess, "run",
+        subprocess,
+        "run",
         lambda *a, **k: MockResult(returncode=6, stdout=""),
     )
     assert clod.query_gpu_vram() is None
@@ -273,6 +277,7 @@ def test_query_system_info_ram_with_psutil():
 
 def test_query_comfyui_running_true(monkeypatch):
     """Returns True when localhost:7860 (AUTOMATIC1111) responds with HTTP 2xx."""
+
     class _Resp:
         status_code = 200
 
@@ -303,9 +308,7 @@ def test_find_comfyui_container_found(monkeypatch):
 
 def test_find_comfyui_container_none(monkeypatch):
     """Returns None when docker ps output is empty."""
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **k: MockResult(returncode=0, stdout="")
-    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: MockResult(returncode=0, stdout=""))
     assert clod.find_comfyui_container() is None
 
 
@@ -350,13 +353,15 @@ def test_comfyui_docker_action_docker_missing(monkeypatch):
 def test_query_video_running_true(monkeypatch):
     class _Resp:
         status_code = 200
+
     monkeypatch.setattr(clod.requests, "get", lambda *a, **k: _Resp())
     assert clod.query_video_running() is True
 
 
 def test_query_video_running_false(monkeypatch):
     monkeypatch.setattr(
-        clod.requests, "get",
+        clod.requests,
+        "get",
         lambda *a, **k: (_ for _ in ()).throw(requests.exceptions.ConnectionError()),
     )
     assert clod.query_video_running() is False
@@ -370,7 +375,7 @@ def test_update_dotenv_key_existing(tmp_path):
     env.write_text("FOO=bar\nIMAGE_GENERATION_ENGINE=automatic1111\nBAZ=qux\n")
     clod.update_dotenv_key(str(env), "IMAGE_GENERATION_ENGINE", "comfyui")
     assert "IMAGE_GENERATION_ENGINE=comfyui" in env.read_text()
-    assert "FOO=bar" in env.read_text()   # other keys untouched
+    assert "FOO=bar" in env.read_text()  # other keys untouched
 
 
 def test_update_dotenv_key_append(tmp_path):

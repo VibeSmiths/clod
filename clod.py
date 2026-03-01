@@ -31,6 +31,7 @@ import requests
 
 try:
     import psutil as _psutil
+
     HAS_PSUTIL = True
 except ImportError:
     HAS_PSUTIL = False
@@ -48,8 +49,8 @@ __version__ = "1.0.0"
 CLOUD_MODEL_PREFIXES = ("claude-", "gpt-", "o1-", "o3-", "gemini-", "groq-", "together-")
 
 SD_WEBUI_URL = "http://localhost:7860"  # AUTOMATIC1111 WebUI (stable-diffusion container)
-COMFYUI_URL = "http://localhost:8188"   # ComfyUI video service
-MCP_SERVER_PORT = 8765                  # MCP filesystem server (localhost only)
+COMFYUI_URL = "http://localhost:8188"  # ComfyUI video service
+MCP_SERVER_PORT = 8765  # MCP filesystem server (localhost only)
 
 SONNET_MODEL = "claude-sonnet-4-6"
 
@@ -83,9 +84,9 @@ TOKEN_LIMIT = 1.00  # force offline
 # effective = total VRAM - 2000 MiB reserved for CUDA driver overhead
 VRAM_TIERS: list[tuple[int, str, str]] = [
     (22_000, "qwen2.5-coder:32b-instruct-q4_K_M", "32b coder  (~20 GB)"),
-    (11_000, "qwen2.5-coder:14b",                  "14b coder  (~10 GB)"),
-    (9_500,  "deepseek-r1:14b",                    "14b reason (~9 GB) "),
-    (5_000,  "llama3.1:8b",                        "8b chat    (~5 GB) "),
+    (11_000, "qwen2.5-coder:14b", "14b coder  (~10 GB)"),
+    (9_500, "deepseek-r1:14b", "14b reason (~9 GB) "),
+    (5_000, "llama3.1:8b", "8b chat    (~5 GB) "),
 ]
 VRAM_CUDA_OVERHEAD_MB = 2_000  # headroom reserved from total for CUDA runtime
 
@@ -258,9 +259,9 @@ def load_config() -> dict:
         "token_budget": 100_000,  # session Claude token budget (input + output)
         "auto_model": False,
         "compose_file": str(pathlib.Path(__file__).parent / "docker-compose.yml"),
-        "dotenv_file":  str(pathlib.Path(__file__).parent / ".env"),
-        "sd_mode":      "image",   # last-active SD mode: "image" | "video"
-        "mcp_port":     MCP_SERVER_PORT,
+        "dotenv_file": str(pathlib.Path(__file__).parent / ".env"),
+        "sd_mode": "image",  # last-active SD mode: "image" | "video"
+        "mcp_port": MCP_SERVER_PORT,
     }
     path = config_path()
     if path.exists():
@@ -597,7 +598,10 @@ def comfyui_docker_action(action: str) -> tuple[bool, str]:
     """
     container = find_comfyui_container()
     if not container:
-        return False, "Stable Diffusion container not found via 'docker ps -a --filter publish=7860'"
+        return (
+            False,
+            "Stable Diffusion container not found via 'docker ps -a --filter publish=7860'",
+        )
     try:
         r = subprocess.run(
             ["docker", action, container],
@@ -656,9 +660,9 @@ def sd_switch_mode(to_mode: str, cfg: dict) -> tuple[bool, str]:
     if to_mode not in ("image", "video"):
         return False, f"Unknown mode '{to_mode}' — use 'image' or 'video'"
     from_mode = "video" if to_mode == "image" else "image"
-    compose   = cfg.get("compose_file", "")
-    dotenv    = cfg.get("dotenv_file",  "")
-    engine    = "automatic1111" if to_mode == "image" else "comfyui"
+    compose = cfg.get("compose_file", "")
+    dotenv = cfg.get("dotenv_file", "")
+    engine = "automatic1111" if to_mode == "image" else "comfyui"
 
     if not pathlib.Path(compose).exists():
         return False, f"docker-compose.yml not found at {compose}"
@@ -675,7 +679,9 @@ def sd_switch_mode(to_mode: str, cfg: dict) -> tuple[bool, str]:
     try:
         r = subprocess.run(
             base_cmd + ["--profile", from_mode, "stop"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if r.returncode != 0:
             errors.append(f"stop {from_mode}: {r.stderr.strip()}")
@@ -686,7 +692,9 @@ def sd_switch_mode(to_mode: str, cfg: dict) -> tuple[bool, str]:
     try:
         r = subprocess.run(
             base_cmd + ["--profile", to_mode, "up", "-d"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if r.returncode != 0:
             errors.append(f"up {to_mode}: {r.stderr.strip()}")
@@ -697,7 +705,9 @@ def sd_switch_mode(to_mode: str, cfg: dict) -> tuple[bool, str]:
     try:
         r = subprocess.run(
             base_cmd + ["up", "-d", "--force-recreate", "open-webui"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if r.returncode != 0:
             errors.append(f"restart open-webui: {r.stderr.strip()}")
@@ -714,7 +724,9 @@ def comfyui_docker_action_video(action: str) -> tuple[bool, str]:
     try:
         r = subprocess.run(
             ["docker", "ps", "-a", "--filter", "publish=8188", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         container = r.stdout.strip().splitlines()[0] if r.returncode == 0 else None
     except Exception:
@@ -722,7 +734,9 @@ def comfyui_docker_action_video(action: str) -> tuple[bool, str]:
     if not container:
         return False, "ComfyUI (video) container not found"
     try:
-        r = subprocess.run(["docker", action, container], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            ["docker", action, container], capture_output=True, text=True, timeout=30
+        )
         return (r.returncode == 0), (r.stderr.strip() or f"docker {action} {container}: OK")
     except FileNotFoundError:
         return False, "docker CLI not found"
@@ -736,26 +750,30 @@ def _prompt_mcp_access(cfg: dict) -> tuple[bool, str]:
     Returns (enabled: bool, directory: str).
     """
     default_dir = str(pathlib.Path.cwd().resolve())
-    console.print(Panel(
-        "[bold]MCP Filesystem Server[/bold]\n"
-        "Grants the LLM read/write/delete access to files on your system via HTTP.\n"
-        f"[dim]Default directory: {default_dir}[/dim]",
-        title="[cyan]MCP access[/cyan]",
-        border_style="cyan",
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            "[bold]MCP Filesystem Server[/bold]\n"
+            "Grants the LLM read/write/delete access to files on your system via HTTP.\n"
+            f"[dim]Default directory: {default_dir}[/dim]",
+            title="[cyan]MCP access[/cyan]",
+            border_style="cyan",
+            expand=False,
+        )
+    )
     try:
-        answer = console.input(
-            "[cyan]Enable MCP filesystem access for this session?[/cyan] [dim][y/N][/dim] "
-        ).strip().lower()
+        answer = (
+            console.input(
+                "[cyan]Enable MCP filesystem access for this session?[/cyan] [dim][y/N][/dim] "
+            )
+            .strip()
+            .lower()
+        )
     except (EOFError, KeyboardInterrupt):
         return False, default_dir
     if answer not in ("y", "yes"):
         return False, default_dir
     try:
-        dir_input = console.input(
-            f"[cyan]Directory[/cyan] [dim][{default_dir}][/dim]: "
-        ).strip()
+        dir_input = console.input(f"[cyan]Directory[/cyan] [dim][{default_dir}][/dim]: ").strip()
     except (EOFError, KeyboardInterrupt):
         return False, default_dir
     chosen = dir_input if dir_input else default_dir
@@ -770,6 +788,7 @@ def start_mcp_server(directory: str, port: int) -> Optional[object]:
     """Start the MCP filesystem server. Returns httpd instance or None on error."""
     try:
         import mcp_server
+
         httpd = mcp_server.start(port=port, directory=directory)
         return httpd
     except Exception as e:
@@ -800,8 +819,10 @@ def print_startup_banner(model: str, mcp_dir: Optional[str] = None, mcp_port: in
     # GPU
     if gpu:
         sd_parts = []
-        if img_on: sd_parts.append("[yellow]A1111 active[/yellow]")
-        if vid_on: sd_parts.append("[yellow]ComfyUI active[/yellow]")
+        if img_on:
+            sd_parts.append("[yellow]A1111 active[/yellow]")
+        if vid_on:
+            sd_parts.append("[yellow]ComfyUI active[/yellow]")
         sd_tag = ("  " + "  ".join(sd_parts)) if sd_parts else ""
         lines.append(
             f"[bold]GPU[/bold]  {gpu['name']}  "
@@ -845,12 +866,14 @@ def print_startup_banner(model: str, mcp_dir: Optional[str] = None, mcp_port: in
         if ram_t >= 32_000:
             lines.append("  [dim]32 GB+ RAM available — CPU offloading may be viable[/dim]")
 
-    console.print(Panel(
-        "\n".join(lines),
-        title="[cyan]System[/cyan]",
-        border_style="cyan",
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[cyan]System[/cyan]",
+            border_style="cyan",
+            expand=False,
+        )
+    )
 
 
 # ── Backend Adapters ───────────────────────────────────────────────────────────
@@ -1548,18 +1571,20 @@ def handle_slash(
         mcp_dir = session_state.get("mcp_dir")
         port = session_state["cfg"].get("mcp_port", MCP_SERVER_PORT)
         if httpd and mcp_dir:
-            console.print(Panel(
-                f"[green]Running[/green]  localhost:{port}\n"
-                f"  Directory: [bold]{mcp_dir}[/bold]\n\n"
-                f"[bold cyan]Endpoints:[/bold cyan]\n"
-                f"  GET    http://localhost:{port}/list          list files\n"
-                f"  GET    http://localhost:{port}/<file>        read file\n"
-                f"  POST   http://localhost:{port}/<file>        write file (raw body)\n"
-                f"  DELETE http://localhost:{port}/<file>        delete file",
-                title="[cyan]MCP Filesystem[/cyan]",
-                border_style="cyan",
-                expand=False,
-            ))
+            console.print(
+                Panel(
+                    f"[green]Running[/green]  localhost:{port}\n"
+                    f"  Directory: [bold]{mcp_dir}[/bold]\n\n"
+                    f"[bold cyan]Endpoints:[/bold cyan]\n"
+                    f"  GET    http://localhost:{port}/list          list files\n"
+                    f"  GET    http://localhost:{port}/<file>        read file\n"
+                    f"  POST   http://localhost:{port}/<file>        write file (raw body)\n"
+                    f"  DELETE http://localhost:{port}/<file>        delete file",
+                    title="[cyan]MCP Filesystem[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                )
+            )
         else:
             console.print(
                 "[dim]MCP filesystem server is not running.  "
@@ -1574,22 +1599,23 @@ def handle_slash(
             rec = recommend_model_for_vram(gpu["total_mb"])
             effective = gpu["total_mb"] - VRAM_CUDA_OVERHEAD_MB
             tier_rows = "\n".join(
-                f"  {'[green]>>[/green]' if model_name == rec else '  '} "
-                f"{label}  {model_name}"
+                f"  {'[green]>>[/green]' if model_name == rec else '  '} " f"{label}  {model_name}"
                 for min_mb, model_name, label in VRAM_TIERS
             )
-            console.print(Panel(
-                f"[bold]{gpu['name']}[/bold]\n"
-                f"  Total:      {gpu['total_mb']:,} MiB\n"
-                f"  Free now:   {gpu['free_mb']:,} MiB\n"
-                f"  Effective:  {effective:,} MiB  (total − {VRAM_CUDA_OVERHEAD_MB} MiB overhead)\n\n"
-                f"[bold cyan]Model tiers:[/bold cyan]\n{tier_rows}\n\n"
-                f"[dim]Recommended:[/dim] [bold cyan]{rec or 'none (< 5 GB)'}[/bold cyan]  "
-                f"  [dim](use [bold]/model {rec}[/bold] to switch)[/dim]",
-                title="[cyan]GPU[/cyan]",
-                border_style="cyan",
-                expand=False,
-            ))
+            console.print(
+                Panel(
+                    f"[bold]{gpu['name']}[/bold]\n"
+                    f"  Total:      {gpu['total_mb']:,} MiB\n"
+                    f"  Free now:   {gpu['free_mb']:,} MiB\n"
+                    f"  Effective:  {effective:,} MiB  (total − {VRAM_CUDA_OVERHEAD_MB} MiB overhead)\n\n"
+                    f"[bold cyan]Model tiers:[/bold cyan]\n{tier_rows}\n\n"
+                    f"[dim]Recommended:[/dim] [bold cyan]{rec or 'none (< 5 GB)'}[/bold cyan]  "
+                    f"  [dim](use [bold]/model {rec}[/bold] to switch)[/dim]",
+                    title="[cyan]GPU[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                )
+            )
             if arg.lower() == "use" and rec:
                 session_state["model"] = rec
                 session_state["pipeline"] = None
@@ -1605,7 +1631,11 @@ def handle_slash(
             if sub == current:
                 console.print(f"[dim]Already in [bold]{sub}[/bold] mode.[/dim]")
             else:
-                svc     = "AUTOMATIC1111 (localhost:7860)" if sub == "image" else "ComfyUI (localhost:8188)"
+                svc = (
+                    "AUTOMATIC1111 (localhost:7860)"
+                    if sub == "image"
+                    else "ComfyUI (localhost:8188)"
+                )
                 console.print(
                     f"[dim]Switching to [bold]{sub}[/bold] mode → {svc}  "
                     f"(stopping {current}, restarting Open-WebUI…)[/dim]"
@@ -1614,17 +1644,24 @@ def handle_slash(
                 if ok:
                     session_state["sd_mode"] = sub
                     gpu = query_gpu_vram()
-                    note  = "" if sub == "image" else "  [dim]Use ComfyUI at localhost:8188 for video workflows.[/dim]"
-                    owui  = "automatic1111" if sub == "image" else "comfyui"
-                    rec   = recommend_model_for_vram(gpu["total_mb"]) if gpu else None
+                    note = (
+                        ""
+                        if sub == "image"
+                        else "  [dim]Use ComfyUI at localhost:8188 for video workflows.[/dim]"
+                    )
+                    owui = "automatic1111" if sub == "image" else "comfyui"
+                    rec = recommend_model_for_vram(gpu["total_mb"]) if gpu else None
                     console.print(
                         Panel(
                             f"[green]Switched to [bold]{sub}[/bold] mode.[/green]\n"
                             f"  Service:   [bold]{svc}[/bold]\n"
                             f"  Open-WebUI image engine: [bold]{owui}[/bold]\n"
-                            + (f"  GPU free:  [bold]{gpu['free_mb']:,} MiB[/bold]  •  "
-                               f"LLM recommendation: [bold cyan]{rec or 'none'}[/bold cyan]\n"
-                               if gpu else "")
+                            + (
+                                f"  GPU free:  [bold]{gpu['free_mb']:,} MiB[/bold]  •  "
+                                f"LLM recommendation: [bold cyan]{rec or 'none'}[/bold cyan]\n"
+                                if gpu
+                                else ""
+                            )
                             + (note + "\n" if note else ""),
                             title=f"[cyan]SD mode → {sub}[/cyan]",
                             border_style="cyan",
@@ -1636,8 +1673,8 @@ def handle_slash(
 
         elif sub == "stop":
             # ── Stop whichever service is running ─────────────────────────
-            img_on   = query_comfyui_running()
-            vid_on   = query_video_running()
+            img_on = query_comfyui_running()
+            vid_on = query_video_running()
             if not img_on and not vid_on:
                 console.print("[dim]No SD service is running.[/dim]")
             else:
@@ -1667,25 +1704,31 @@ def handle_slash(
 
         else:
             # ── Status ────────────────────────────────────────────────────
-            img_on  = query_comfyui_running()
-            vid_on  = query_video_running()
-            gpu     = query_gpu_vram()
-            mode    = session_state.get("sd_mode", "image")
+            img_on = query_comfyui_running()
+            vid_on = query_video_running()
+            gpu = query_gpu_vram()
+            mode = session_state.get("sd_mode", "image")
             img_str = "[green]running[/green]" if img_on else "[dim]stopped[/dim]"
             vid_str = "[green]running[/green]" if vid_on else "[dim]stopped[/dim]"
-            used    = (gpu["total_mb"] - gpu["free_mb"]) if gpu else 0
-            console.print(Panel(
-                f"[bold]Image[/bold]  AUTOMATIC1111  localhost:7860  {img_str}\n"
-                f"[bold]Video[/bold]  ComfyUI        localhost:8188  {vid_str}\n"
-                + (f"  GPU: {gpu['free_mb']:,} MiB free  •  ~{used:,} MiB in use\n" if gpu else "")
-                + f"\n[dim]Active mode: [bold]{mode}[/bold][/dim]\n"
-                f"[dim]  /sd image  — switch to AUTOMATIC1111 + restart Open-WebUI[/dim]\n"
-                f"[dim]  /sd video  — switch to ComfyUI     + restart Open-WebUI[/dim]\n"
-                f"[dim]  /sd stop   — stop all SD services (free VRAM for LLMs)[/dim]",
-                title="[cyan]SD status[/cyan]",
-                border_style="cyan",
-                expand=False,
-            ))
+            used = (gpu["total_mb"] - gpu["free_mb"]) if gpu else 0
+            console.print(
+                Panel(
+                    f"[bold]Image[/bold]  AUTOMATIC1111  localhost:7860  {img_str}\n"
+                    f"[bold]Video[/bold]  ComfyUI        localhost:8188  {vid_str}\n"
+                    + (
+                        f"  GPU: {gpu['free_mb']:,} MiB free  •  ~{used:,} MiB in use\n"
+                        if gpu
+                        else ""
+                    )
+                    + f"\n[dim]Active mode: [bold]{mode}[/bold][/dim]\n"
+                    f"[dim]  /sd image  — switch to AUTOMATIC1111 + restart Open-WebUI[/dim]\n"
+                    f"[dim]  /sd video  — switch to ComfyUI     + restart Open-WebUI[/dim]\n"
+                    f"[dim]  /sd stop   — stop all SD services (free VRAM for LLMs)[/dim]",
+                    title="[cyan]SD status[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                )
+            )
 
     else:
         return False
@@ -1855,14 +1898,16 @@ def main() -> None:
         if gpu:
             rec = recommend_model_for_vram(gpu["total_mb"])
             if rec and rec != model:
-                console.print(Panel(
-                    f"[bold]{gpu['name']}[/bold]  {gpu['total_mb']:,} MiB total  •  "
-                    f"{gpu['free_mb']:,} MiB free\n"
-                    f"[dim]Auto-selected:[/dim] [bold cyan]{rec}[/bold cyan]",
-                    title="[cyan]GPU auto-model[/cyan]",
-                    border_style="cyan",
-                    expand=False,
-                ))
+                console.print(
+                    Panel(
+                        f"[bold]{gpu['name']}[/bold]  {gpu['total_mb']:,} MiB total  •  "
+                        f"{gpu['free_mb']:,} MiB free\n"
+                        f"[dim]Auto-selected:[/dim] [bold cyan]{rec}[/bold cyan]",
+                        title="[cyan]GPU auto-model[/cyan]",
+                        border_style="cyan",
+                        expand=False,
+                    )
+                )
                 model = rec
 
     # Index mode

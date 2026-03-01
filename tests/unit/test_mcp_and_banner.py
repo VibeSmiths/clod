@@ -11,7 +11,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))
 import pytest
 import clod
 
-
 # ── _prompt_mcp_access ────────────────────────────────────────────────────────
 
 
@@ -61,6 +60,7 @@ def test_prompt_mcp_access_yes_invalid_dir(monkeypatch, fake_console):
 
 def test_prompt_mcp_access_eof_on_first_input(monkeypatch, fake_console):
     """EOFError on the first console.input returns (False, default_dir)."""
+
     def raise_eof(*a, **k):
         raise EOFError
 
@@ -71,6 +71,7 @@ def test_prompt_mcp_access_eof_on_first_input(monkeypatch, fake_console):
 
 def test_prompt_mcp_access_keyboard_interrupt_on_first(monkeypatch, fake_console):
     """KeyboardInterrupt on the first console.input returns (False, default_dir)."""
+
     def raise_ki(*a, **k):
         raise KeyboardInterrupt
 
