@@ -14,23 +14,24 @@
 
 set -euo pipefail
 
-# ── 1. Loop guard ─────────────────────────────────────────────────────────────
-if [ -n "${CLAUDE_PRECOMMIT_ACTIVE:-}" ]; then
-    echo "[pre-commit] skipping — Claude session already active"
-    exit 0
-fi
-export CLAUDE_PRECOMMIT_ACTIVE=1
-
-# ── 2. Dependency check ───────────────────────────────────────────────────────
-if ! command -v claude &>/dev/null; then
-    echo "[pre-commit] 'claude' not in PATH — skipping review (install Claude Code to enable)"
-    exit 0
-fi
-
-# ── 3. Get staged files and diff ──────────────────────────────────────────────
+# ── 1. Get staged files and diff ──────────────────────────────────────────────
 STAGED=$(git diff --cached --name-only --diff-filter=ACM)
 if [ -z "$STAGED" ]; then
     exit 0
+fi
+
+# ── 2. Auto-format Python files with black (always, regardless of diff size) ──
+PY_STAGED=$(echo "$STAGED" | grep '\.py$' || true)
+if [ -n "$PY_STAGED" ]; then
+    if command -v python &>/dev/null && python -m black --version &>/dev/null 2>&1; then
+        echo "[pre-commit] black formatting staged .py files..."
+        # shellcheck disable=SC2086
+        python -m black $PY_STAGED
+        # shellcheck disable=SC2086
+        git add -- $PY_STAGED
+    else
+        echo "[pre-commit] black not available — skipping auto-format"
+    fi
 fi
 
 DIFF=$(git diff --cached)
@@ -46,66 +47,6 @@ if [ "$DIFF_LINES" -gt 1000 ]; then
     echo "[pre-commit] Diff is ${DIFF_LINES} lines — too large for automated review, skipping"
     exit 0
 fi
-
-# ── 4. Auto-format Python files with black ────────────────────────────────────
-PY_STAGED=$(echo "$STAGED" | grep '\.py$' || true)
-if [ -n "$PY_STAGED" ]; then
-    if command -v python &>/dev/null && python -m black --version &>/dev/null 2>&1; then
-        echo "[pre-commit] black formatting staged .py files..."
-        # shellcheck disable=SC2086
-        python -m black $PY_STAGED
-        # shellcheck disable=SC2086
-        git add -- $PY_STAGED
-        # Recompute diff after black so Claude sees clean code
-        DIFF=$(git diff --cached)
-        DIFF_LINES=$(echo "$DIFF" | wc -l)
-    else
-        echo "[pre-commit] black not available — skipping auto-format"
-    fi
-fi
-
-# ── 5. Run Claude in one-shot mode ────────────────────────────────────────────
-echo "[pre-commit] Claude reviewing staged changes (${DIFF_LINES} diff lines)..."
-
-REPO_ROOT=$(git rev-parse --show-toplevel)
-
-# Unset CLAUDECODE so this can run from inside an existing Claude Code session
-# (Claude Code sets this var to detect/block nested invocations)
-unset CLAUDECODE
-
-claude \
-    --dangerously-skip-permissions \
-    --allowedTools "Read Edit Write" \
-    --output-format text \
-    -p "$(cat <<PROMPT
-You are a pre-commit code reviewer. Review the staged diff below and fix any
-issues you find by editing the source files directly.
-
-Staged files:
-$(echo "$STAGED" | sed 's/^/  /')
-
-Diff:
-\`\`\`diff
-$DIFF
-\`\`\`
-
-Rules:
-- Fix: lint errors, obvious bugs, unused imports, undefined variables,
-  type mismatches, syntax errors, style inconsistencies
-- Match the file's existing style — do not reformat whole files
-- Only edit files that appear in the staged list above
-- Do NOT refactor, rename, or restructure beyond what is clearly broken
-- Do NOT add features, comments, or docstrings to unchanged code
-- Do NOT run git commands or commit anything
-- If the code looks good as-is, output only the word: LGTM
-
-Apply fixes now using your file editing tools. Work from the repo root: $REPO_ROOT
-PROMPT
-)" || echo "[pre-commit] Claude exited with an error — committing as-is"
-
-# ── 6. Re-stage any files Claude may have modified ────────────────────────────
-# shellcheck disable=SC2086
-echo "$STAGED" | tr '\n' '\0' | xargs -0 git add --
 
 echo "[pre-commit] Review complete."
 exit 0

@@ -124,7 +124,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: python -m pip install --upgrade pip
-      - run: pip install -r requirements.txt pyinstaller
+      - run: pip install -r requirements.txt pyinstaller Pillow
       - run: python -m PyInstaller clod.spec --noconfirm
       - run: dist\clod.exe --version
       - uses: actions/upload-artifact@v4
@@ -162,6 +162,7 @@ jobs:
                    AppDir/usr/share/applications \
                    AppDir/usr/share/icons/hicolor/256x256/apps
           cp dist/clod AppDir/usr/bin/
+          cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/clod.png
           cat > AppDir/usr/share/applications/clod.desktop <<'DESKTOP'
           [Desktop Entry]
           Type=Application
@@ -172,17 +173,6 @@ jobs:
           Categories=Development;Utility;
           Terminal=true
           DESKTOP
-          python3 -c "
-          import struct, zlib
-          def png_chunk(name, data):
-              c = struct.pack('>I', len(data)) + name + data
-              return c + struct.pack('>I', zlib.crc32(c[4:]) & 0xffffffff)
-          w, h = 32, 32
-          raw = b'\x00' + b'\xff\x00\x00\xff' * w
-          compressed = zlib.compress(raw * h)
-          png = b'\x89PNG\r\n\x1a\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + png_chunk(b'IDAT', compressed) + png_chunk(b'IEND', b'')
-          open('AppDir/usr/share/icons/hicolor/256x256/apps/clod.png', 'wb').write(png)
-          "
           ARCH=x86_64 ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --executable AppDir/usr/bin/clod \

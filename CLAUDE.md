@@ -12,7 +12,6 @@
 | Service | URL | Purpose |
 |---------|-----|---------|
 | Open-WebUI | localhost:3002 | Chat UI for Ollama models |
-| Perplexica | localhost:3000 | AI-powered web search |
 | SearXNG | localhost:8080 | Private search (used by search_web tool) |
 | n8n | localhost:5678 | Automation workflows |
 | ChromaDB | localhost:8000 | Vector memory (semantic_recall tool) |

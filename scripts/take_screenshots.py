@@ -20,7 +20,7 @@ import clod
 from clod import TokenBudget
 from rich.console import Console
 
-SCREENSHOTS_DIR = pathlib.Path(__file__).parent.parent / "screenshots"
+SCREENSHOTS_DIR = pathlib.Path(__file__).parent.parent / "assets"
 
 
 def capture(name: str, fn):

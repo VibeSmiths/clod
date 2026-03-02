@@ -1,13 +1,13 @@
 # ── Network topology (security) ───────────────────────────────────────────────
 #
 #  internal  (isolated — no internet)
-#    n8n, chroma, pipelines, litellm (internal face)
+#    chroma, pipelines, litellm (internal face)
+#    n8n  [automation profile]
 #
 #  gateway   (internet-capable)
 #    litellm → api.anthropic.com, api.openai.com, etc.
 #    searxng → external search engines
 #
-#  Services using network_mode: host (perplexica) bypass Docker networking.
 #
 networks:
   internal:
@@ -110,6 +110,7 @@ services:
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-local-dev}
     volumes:
       - owui_data:/app/backend/data:rw
+      - ${SHARED_DIR:-./shared}:/workspace:rw
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -132,6 +133,7 @@ services:
       - OLLAMA_URL=http://ollama:11434
     networks:
       - internal
+      - gateway
     depends_on:
       - litellm
       - ollama
@@ -169,34 +171,12 @@ services:
       - internal
       - gateway
 
-  # ── Perplexica — AI web search ────────────────────────────────────────────────
-  perplexica-backend:
-    image: itzcrazykns1337/perplexica-backend:main
-    container_name: perplexica-backend
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ${PERPLEXICA_CONFIG_DIR}/config.toml:/home/perplexica/config.toml
-      - perplexica_uploads:/home/perplexica/uploads
-      - perplexica_db:/home/perplexica/data
-    depends_on:
-      - searxng
-
-  perplexica-frontend:
-    image: itzcrazykns1337/perplexica-frontend:main
-    container_name: perplexica-frontend
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:3001
-      - NEXT_PUBLIC_WS_URL=ws://localhost:3001
-    depends_on:
-      - perplexica-backend
-
   # ── n8n — automation workflows ────────────────────────────────────────────────
+  # Optional service — start with: docker compose --profile automation up -d
   n8n:
     image: n8nio/n8n:latest
     container_name: n8n
+    profiles: ["automation"]
     restart: unless-stopped
     ports:
       - "5678:5678"
@@ -206,13 +186,13 @@ services:
       - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
-      - N8N_PATH=/n8n/
       - N8N_DIAGNOSTICS_ENABLED=false
       - N8N_VERSION_NOTIFICATIONS_ENABLED=false
-      - WEBHOOK_URL=http://localhost/n8n
+      - WEBHOOK_URL=http://localhost:5678
       - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
     networks:
       - internal
+      - gateway
 
   # ── Chroma — vector DB ────────────────────────────────────────────────────────
   chroma:
@@ -225,6 +205,7 @@ services:
       - chroma_data:/chroma/chroma
     networks:
       - internal
+      - gateway
 
   # ── Stable Diffusion ──────────────────────────────────────────────────────────
   # To skip the build and pull a pre-built image, set SD_IMAGE in .env and
@@ -261,7 +242,7 @@ services:
   # Models go under ${BASE_DIR}/comfyui/models — download CogVideoX, LTX-Video, etc.
   # Access at localhost:8188.  Switch with /sd video in clod.
   comfyui:
-    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu124}
+    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu128-slim}
     pull_policy: always
     profiles: ["video"]
     container_name: ${COMFYUI_HOST:-comfyui}
@@ -303,6 +284,13 @@ services:
       - DEFAULT_MODEL=${DEFAULT_MODEL:-deepseek-r1:1.5b}
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      # VRAM to reserve as headroom (bytes). Helps prevent OOM on 16 GB cards.
+      # e.g. 512 MB = 536870912  1 GB = 1073741824
+      - OLLAMA_GPU_OVERHEAD=${OLLAMA_GPU_OVERHEAD:-536870912}
+      # How long to keep a model loaded after last request. Frees VRAM between models.
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-5m}
+      # Max simultaneous model loads (lower = less VRAM pressure when switching models)
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-1}
     networks:
       - internal
       - default
@@ -351,18 +339,6 @@ services:
 # ── Volumes ───────────────────────────────────────────────────────────────────
 volumes:
   # Host-bound volumes — all paths set in .env
-  perplexica_uploads:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: "${PERPLEXICA_UPLOADS}"
-  perplexica_db:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: "${PERPLEXICA_DB}"  
   pipelines_data:
     driver: local
     driver_opts:
