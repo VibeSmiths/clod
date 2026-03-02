@@ -5,7 +5,6 @@ _get_clod_root, _ensure_local_configs.
 """
 
 import pathlib
-import shutil
 import sys
 import tempfile
 
