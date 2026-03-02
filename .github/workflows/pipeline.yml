@@ -127,7 +127,7 @@ jobs:
       - run: pip install -r requirements.txt pyinstaller Pillow
       - run: python -m PyInstaller clod.spec --noconfirm
       - run: dist\clod.exe --version
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ github.event_name == 'pull_request' && format('clod-pr-{0}', github.event.pull_request.number) || format('clod-windows-{0}', needs.versioner.outputs.version) }}
           path: dist/clod.exe
@@ -179,7 +179,7 @@ jobs:
             --desktop-file AppDir/usr/share/applications/clod.desktop \
             --output appimage
           mv clod*.AppImage clod.AppImage 2>/dev/null || mv *clod*.AppImage clod.AppImage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: clod-linux-${{ needs.versioner.outputs.version }}
           path: clod.AppImage
@@ -207,7 +207,7 @@ jobs:
           path: failed-artifacts/
       - name: Upload EXE as failure artifact
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: clod-integration-failure-${{ github.run_number }}
           path: failed-artifacts/clod.exe
