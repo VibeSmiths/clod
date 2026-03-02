@@ -254,6 +254,7 @@ def load_config() -> dict:
         "litellm_url": "http://localhost:4000",
         "litellm_key": "sk-local-dev",
         "pipelines_url": "http://localhost:9099",
+        "chroma_url": "http://localhost:8000",
         "searxng_url": "http://localhost:8080",
         "default_model": "qwen2.5-coder:14b",
         "pipeline": None,
@@ -296,7 +297,7 @@ def tool_bash_exec(args: dict, console: Console) -> str:
             border_style="yellow",
         )
     )
-    confirmed = console.input("[yellow]Run this command? [y/N] [/yellow]").strip().lower()
+    confirmed = console.input("[yellow]Run this command? (y/n) [/yellow]").strip().lower()
     if confirmed not in ("y", "yes"):
         return "User declined to execute this command."
     try:
@@ -695,7 +696,6 @@ _LOCAL_CONFIGS: dict[str, str] = {
     "docker-compose.yml": "docker-compose.yml",
     "litellm/config.yaml": "litellm/config.yaml",
     "searxng/settings.yml": "searxng/settings.yml",
-    "perplexica/config.toml": "perplexica/config.toml",
     "nginx/nginx.conf": "nginx/nginx.conf",
     "pipelines/code_review_pipe.py": "pipelines/code_review_pipe.py",
     "pipelines/reason_review_pipe.py": "pipelines/reason_review_pipe.py",
@@ -714,8 +714,6 @@ _SERVICE_CONFIGS: dict[str, list[str]] = {
         "pipelines/claude_review_pipe.py",
     ],
     "searxng": ["searxng/settings.yml"],
-    "perplexica-backend": ["perplexica/config.toml"],
-    "perplexica-frontend": ["perplexica/config.toml"],
     "nginx": ["nginx/nginx.conf"],
 }
 
@@ -754,21 +752,30 @@ def _ensure_local_configs(
     restored: list[str] = []
     failed: list[str] = []
 
+    meipass = pathlib.Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "frozen", False) else None
+
     for rel in missing:
         dest = root / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            console_obj.print(f"  [red]cannot create dir {dest.parent}: {e}[/red]")
+            failed.append(rel)
+            continue
 
         # 1. PyInstaller bundle (sys._MEIPASS)
-        if getattr(sys, "frozen", False):
-            bundle_src = pathlib.Path(getattr(sys, "_MEIPASS", "")) / rel
+        if meipass is not None:
+            bundle_src = meipass / rel
             if bundle_src.exists():
                 try:
                     shutil.copy2(str(bundle_src), str(dest))
                     console_obj.print(f"  [green]restored[/green] {rel} [dim](from bundle)[/dim]")
                     restored.append(rel)
                     continue
-                except Exception:
-                    pass
+                except Exception as e:
+                    console_obj.print(f"  [yellow]bundle copy failed for {rel}: {e}[/yellow]")
+            else:
+                console_obj.print(f"  [yellow]not in bundle: {bundle_src}[/yellow]")
 
         # 2. GitHub raw fetch
         if online_ok:
@@ -780,8 +787,10 @@ def _ensure_local_configs(
                     console_obj.print(f"  [green]restored[/green] {rel} [dim](from GitHub)[/dim]")
                     restored.append(rel)
                     continue
-            except Exception:
-                pass
+                else:
+                    console_obj.print(f"  [yellow]GitHub {r.status_code} for {rel}[/yellow]")
+            except Exception as e:
+                console_obj.print(f"  [yellow]GitHub fetch failed for {rel}: {e}[/yellow]")
 
         # 3. Could not restore
         console_obj.print(f"  [yellow][!] could not restore[/yellow] {rel}")
@@ -821,7 +830,7 @@ def _check_service_health(cfg: dict) -> dict[str, bool]:
         "litellm": (f"{cfg.get('litellm_url', 'http://localhost:4000')}/health", 3),
         "pipelines": (f"{cfg.get('pipelines_url', 'http://localhost:9099')}/", 3),
         "searxng": (f"{cfg.get('searxng_url', 'http://localhost:8080')}/healthz", 3),
-        "chroma": ("http://localhost:8000/api/v2/heartbeat", 3),
+        "chroma": (f"{cfg.get('chroma_url', 'http://localhost:8000')}/api/v2/heartbeat", 3),
     }
     for name, (url, timeout) in endpoints.items():
         try:
@@ -834,13 +843,27 @@ def _check_service_health(cfg: dict) -> dict[str, bool]:
 
 def _compute_features(env_vars: dict, health: dict) -> dict[str, bool]:
     """Derive feature flags from env vars and service health. Pure function."""
+    _ant_key = env_vars.get("ANTHROPIC_API_KEY", "").strip()
+    has_anthropic_key = bool(_ant_key) and "YOUR_KEY" not in _ant_key and "_HERE" not in _ant_key
     return {
-        "cloud_models": health.get("litellm", False),
+        "cloud_models": health.get("litellm", False) and has_anthropic_key,
         "web_search": health.get("searxng", False),
         "semantic_recall": health.get("chroma", False),
         "pipelines": health.get("pipelines", False),
-        "offline_default": not health.get("ollama", False),
+        # Offline by default unless an Anthropic key is configured.
+        # Ollama always runs locally; offline mode only gates Claude/cloud calls.
+        "offline_default": not has_anthropic_key,
     }
+
+
+def _compose_base(cfg: dict) -> list[str]:
+    """Return the base `docker compose -f <file> --env-file <file>` command list."""
+    compose = cfg.get("compose_file", "")
+    dotenv = cfg.get("dotenv_file", "")
+    cmd = ["docker", "compose", "-f", compose]
+    if dotenv and pathlib.Path(dotenv).exists():
+        cmd += ["--env-file", dotenv]
+    return cmd
 
 
 def _offer_docker_startup(cfg: dict, missing: list, console_obj: Console) -> bool:
@@ -862,7 +885,7 @@ def _offer_docker_startup(cfg: dict, missing: list, console_obj: Console) -> boo
         )
     )
     ans = (
-        console_obj.input("[yellow]Start core docker services now? [Y/n] [/yellow]").strip().lower()
+        console_obj.input("[yellow]Start core docker services now? (y/n) [/yellow]").strip().lower()
     )
     if ans in ("n", "no"):
         return False
@@ -874,7 +897,7 @@ def _offer_docker_startup(cfg: dict, missing: list, console_obj: Console) -> boo
 
     try:
         r = subprocess.run(
-            ["docker", "compose", "-f", compose, "up", "-d"],
+            _compose_base(cfg) + ["up", "-d"],
             capture_output=True,
             text=True,
             timeout=120,
@@ -931,8 +954,10 @@ def _setup_env_wizard(cfg: dict) -> dict:
     Interactive first-run wizard: collect key settings and generate .env from .env.example.
     Returns parsed env dict of the written file.
     """
-    env_example = pathlib.Path(__file__).parent / ".env.example"
-    env_target = pathlib.Path(cfg.get("dotenv_file", str(pathlib.Path(__file__).parent / ".env")))
+    root = _get_clod_root()
+    env_example = root / ".env.example"
+    env_target = root / ".env"
+    cfg["dotenv_file"] = str(env_target)  # ensure cfg reflects current run directory
 
     console.print(
         Panel(
@@ -1042,8 +1067,6 @@ _SERVICE_ENV_VOLUMES: dict[str, list[str]] = {
     "searxng": ["SEARCH_DIR", "SEARXNG_CONFIG_DIR"],
     "chroma": ["CHROMA_DATA"],
     "n8n": ["N8N_DATA"],
-    "perplexica-backend": ["PERPLEXICA_UPLOADS", "PERPLEXICA_DB"],
-    "perplexica-frontend": [],
     "tts": ["VOICES_DIR", "TTS_CONFIG_DIR"],
 }
 
@@ -1112,8 +1135,7 @@ def _reset_service(
     delete_mode: 'each' = prompt per path | 'all' = delete all | 'none' = skip deletion
     Returns True on success.
     """
-    compose = cfg.get("compose_file", "")
-    base_cmd = ["docker", "compose", "-f", compose]
+    base_cmd = _compose_base(cfg)
 
     console_obj.print(f"\n[cyan]Resetting [bold]{service}[/bold]…[/cyan]")
 
@@ -1147,7 +1169,7 @@ def _reset_service(
             should_delete = True
         elif delete_mode == "each":
             ans = (
-                console_obj.input(f"  [yellow]Delete [bold]{p}[/bold]? [y/N] [/yellow]")
+                console_obj.input(f"  [yellow]Delete [bold]{p}[/bold]? (y/n) [/yellow]")
                 .strip()
                 .lower()
             )
@@ -1210,12 +1232,16 @@ def sd_switch_mode(to_mode: str, cfg: dict) -> tuple[bool, str]:
     if dotenv and not update_dotenv_key(dotenv, "IMAGE_GENERATION_ENGINE", engine):
         errors.append("could not update .env (non-fatal)")
 
-    base_cmd = ["docker", "compose", "-f", compose]
+    base_cmd = _compose_base(cfg)
+    # Map profile names to their specific service container names
+    _profile_svc = {"image": "stable-diffusion", "video": "comfyui"}
+    old_svc = _profile_svc.get(from_mode, from_mode)
+    new_svc = _profile_svc.get(to_mode, to_mode)
 
-    # 2. Stop old profile
+    # 2. Stop only the old profile's service (avoids re-pulling all pull_policy:always images)
     try:
         r = subprocess.run(
-            base_cmd + ["--profile", from_mode, "stop"],
+            base_cmd + ["stop", old_svc],
             capture_output=True,
             text=True,
             timeout=60,
@@ -1225,10 +1251,10 @@ def sd_switch_mode(to_mode: str, cfg: dict) -> tuple[bool, str]:
     except Exception as e:
         errors.append(f"stop {from_mode}: {e}")
 
-    # 3. Start new profile
+    # 3. Start only the new profile's service
     try:
         r = subprocess.run(
-            base_cmd + ["--profile", to_mode, "up", "-d"],
+            base_cmd + ["--profile", to_mode, "up", "-d", new_svc],
             capture_output=True,
             text=True,
             timeout=120,
@@ -1299,9 +1325,7 @@ def _prompt_mcp_access(cfg: dict) -> tuple[bool, str]:
     )
     try:
         answer = (
-            console.input(
-                "[cyan]Enable MCP filesystem access for this session?[/cyan] [dim][y/N][/dim] "
-            )
+            console.input("[cyan]Enable MCP filesystem access for this session? (y/n): [/cyan]")
             .strip()
             .lower()
         )
@@ -1744,7 +1768,7 @@ def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
         claude_md = proj_path / "CLAUDE.md"
         skip_claude = False
         if claude_md.exists():
-            ans = console.input("  CLAUDE.md exists — overwrite? [y/N] ").strip().lower()
+            ans = console.input("  CLAUDE.md exists — overwrite? (y/n) ").strip().lower()
             skip_claude = ans not in ("y", "yes")
         if not skip_claude:
             console.print(f"  [dim]generating CLAUDE.md via {model_label}…[/dim]")
@@ -1761,7 +1785,7 @@ def run_index_mode(root: pathlib.Path, cfg: dict) -> None:
         if readme.exists():
             existing_readme = readme.read_text(encoding="utf-8", errors="ignore")
             if existing_readme.strip():
-                ans = console.input("  README.md exists — update? [y/N] ").strip().lower()
+                ans = console.input("  README.md exists — update? (y/n) ").strip().lower()
                 skip_readme = ans not in ("y", "yes")
         if not skip_readme:
             console.print(f"  [dim]generating README.md via {model_label}…[/dim]")
@@ -1832,7 +1856,7 @@ def check_token_thresholds(budget: TokenBudget, session_state: dict) -> None:
         ans = (
             console.input(
                 f"[bold yellow]⚠ Claude tokens at {budget.pct}% "
-                f"({budget.status_str()}). Go offline? [y/N] [/bold yellow]"
+                f"({budget.status_str()}). Go offline? (y/n) [/bold yellow]"
             )
             .strip()
             .lower()
@@ -2352,14 +2376,14 @@ def handle_slash(
             # ── Stop all core services ────────────────────────────────────
             compose = cfg.get("compose_file", "")
             confirm = (
-                console.input("[yellow]Stop ALL core docker services? [y/N] [/yellow]")
+                console.input("[yellow]Stop ALL core docker services? (y/n) [/yellow]")
                 .strip()
                 .lower()
             )
             if confirm in ("y", "yes"):
                 try:
                     r = subprocess.run(
-                        ["docker", "compose", "-f", compose, "down"],
+                        _compose_base(cfg) + ["down"],
                         capture_output=True,
                         text=True,
                         timeout=60,
@@ -2445,8 +2469,6 @@ def handle_slash(
                 "chroma",
                 "n8n",
                 "searxng",
-                "perplexica-backend",
-                "perplexica-frontend",
                 "tts",
                 "pipelines",
                 "litellm",
@@ -2522,7 +2544,6 @@ def run_repl(
     health: Optional[dict] = None,
 ) -> None:
     history_path().parent.mkdir(parents=True, exist_ok=True)
-    session = PromptSession(history=FileHistory(str(history_path())))
 
     budget = TokenBudget(cfg.get("token_budget", 100_000))
 
@@ -2547,12 +2568,13 @@ def run_repl(
     if system:
         messages.append({"role": "system", "content": system})
 
-    print_header(model, pipeline, tools_on, budget, offline=False)
+    print_header(model, pipeline, tools_on, budget, offline=offline_default)
 
-    # MCP filesystem server — prompt before banner so banner can show status
+    # MCP filesystem server — prompt before PromptSession init so that
+    # prompt_toolkit's win32 console-mode changes don't break console.input().
     mcp_dir: Optional[str] = None
     mcp_port = cfg.get("mcp_port", MCP_SERVER_PORT)
-    if sys.stdin.isatty():
+    if sys.stdout.isatty():
         mcp_on, chosen_dir = _prompt_mcp_access(cfg)
         if mcp_on:
             httpd = start_mcp_server(chosen_dir, mcp_port)
@@ -2571,6 +2593,10 @@ def run_repl(
                     messages[0]["content"] += f"\n\n{mcp_ctx}"
                 else:
                     messages.insert(0, {"role": "system", "content": mcp_ctx})
+
+    # Initialize PromptSession after all console.input() prompts so that
+    # prompt_toolkit's win32 console-mode setup doesn't interfere with them.
+    session = PromptSession(history=FileHistory(str(history_path())))
 
     print_startup_banner(
         model,
@@ -2636,14 +2662,16 @@ def main() -> None:
     # ── Restore missing local config files (docker-compose.yml, litellm/, …) ─
     _clod_root = _get_clod_root()
     _ensure_local_configs(_clod_root, online_ok=True, console_obj=console)
-    # Re-apply compose_file in case it was just restored
-    if not pathlib.Path(cfg.get("compose_file", "nonexistent")).exists():
-        cfg["compose_file"] = str(_clod_root / "docker-compose.yml")
+    # Always pin compose_file and dotenv_file to the current exe/repo directory.
+    # A stale config.json from a previous run location would otherwise point
+    # these at the wrong path, which breaks docker compose and the env wizard.
+    cfg["compose_file"] = str(_clod_root / "docker-compose.yml")
+    cfg["dotenv_file"] = str(_clod_root / ".env")
 
     # ── Environment and service health setup ──────────────────────────────────
-    env_path = pathlib.Path(cfg.get("dotenv_file", ""))
+    env_path = pathlib.Path(cfg["dotenv_file"])
     env_vars = _parse_dotenv(str(env_path))
-    if not env_path.exists() and sys.stdin.isatty():
+    if not env_path.exists() and sys.stdout.isatty():
         env_vars = _setup_env_wizard(cfg)
 
     health = _check_service_health(cfg)

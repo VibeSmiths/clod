@@ -21,7 +21,6 @@ config_datas = [
     ('docker-compose.yml',              '.'),
     ('litellm/config.yaml',             'litellm'),
     ('searxng/settings.yml',            'searxng'),
-    ('perplexica/config.toml',          'perplexica'),
     ('nginx/nginx.conf',                'nginx'),
     ('pipelines/code_review_pipe.py',   'pipelines'),
     ('pipelines/reason_review_pipe.py', 'pipelines'),

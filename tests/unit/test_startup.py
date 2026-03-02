@@ -67,8 +67,11 @@ def _all_down():
     }
 
 
+_ENV_WITH_KEY = {"ANTHROPIC_API_KEY": "sk-ant-test"}
+
+
 def test_compute_features_all_healthy():
-    feats = clod._compute_features({}, _all_up())
+    feats = clod._compute_features(_ENV_WITH_KEY, _all_up())
     assert feats["cloud_models"] is True
     assert feats["web_search"] is True
     assert feats["semantic_recall"] is True
@@ -76,10 +79,17 @@ def test_compute_features_all_healthy():
     assert feats["offline_default"] is False
 
 
+def test_compute_features_no_anthropic_key_offline_by_default():
+    """Without an Anthropic key, offline_default is True regardless of service health."""
+    feats = clod._compute_features({}, _all_up())
+    assert feats["offline_default"] is True
+    assert feats["cloud_models"] is False
+
+
 def test_compute_features_litellm_down():
     health = _all_up()
     health["litellm"] = False
-    feats = clod._compute_features({}, health)
+    feats = clod._compute_features(_ENV_WITH_KEY, health)
     assert feats["cloud_models"] is False
 
 
@@ -102,13 +112,6 @@ def test_compute_features_pipelines_down():
     health["pipelines"] = False
     feats = clod._compute_features({}, health)
     assert feats["pipelines"] is False
-
-
-def test_compute_features_ollama_down_triggers_offline():
-    health = _all_up()
-    health["ollama"] = False
-    feats = clod._compute_features({}, health)
-    assert feats["offline_default"] is True
 
 
 def test_compute_features_all_down():
@@ -170,12 +173,10 @@ def test_check_service_health_5xx_is_down(mock_cfg):
 
 def test_setup_env_wizard_creates_env(tmp_path, monkeypatch):
     """Wizard should create .env, write GPU_DRIVER, and return a dict."""
+    monkeypatch.setattr(clod, "_get_clod_root", lambda: tmp_path)
     env_target = tmp_path / ".env"
 
-    cfg = {
-        "dotenv_file": str(env_target),
-        "litellm_key": "sk-local-dev",
-    }
+    cfg = {"litellm_key": "sk-local-dev"}
 
     # Simulate user pressing Enter for all prompts (accept defaults, skip optional)
     inputs = iter(["", "", "", ""])  # gpu choice, anthropic key, hf token, litellm key
@@ -482,8 +483,9 @@ def test_offer_docker_startup_generic_exception(tmp_path, monkeypatch, mock_cfg)
 
 def test_setup_env_wizard_with_api_keys(tmp_path, monkeypatch):
     """Providing API keys covers the if-anthropic_key and if-hf_token branches."""
+    monkeypatch.setattr(clod, "_get_clod_root", lambda: tmp_path)
     env_target = tmp_path / ".env"
-    cfg = {"dotenv_file": str(env_target), "litellm_key": "sk-local-dev"}
+    cfg = {"litellm_key": "sk-local-dev"}
 
     # 4 prompts: gpu_choice, anthropic_key, hf_token, litellm_key
     inputs = iter(["1", "sk-ant-test", "hf_test_token", ""])
@@ -511,8 +513,8 @@ def test_setup_env_wizard_with_api_keys(tmp_path, monkeypatch):
 
 def test_setup_env_wizard_write_exception(tmp_path, monkeypatch):
     """If .env cannot be written, wizard returns {}."""
-    env_target = tmp_path / ".env"
-    cfg = {"dotenv_file": str(env_target), "litellm_key": "sk-local-dev"}
+    monkeypatch.setattr(clod, "_get_clod_root", lambda: tmp_path)
+    cfg = {"litellm_key": "sk-local-dev"}
 
     inputs = iter(["", "", "", ""])
 

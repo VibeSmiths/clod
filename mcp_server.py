@@ -77,16 +77,21 @@ def _make_handler(serve_dir: str):
     return FileHandler
 
 
-def start(port: int = PORT, directory: str | None = None) -> http.server.HTTPServer:
+def start(
+    port: int = PORT,
+    directory: str | None = None,
+    host: str = "0.0.0.0",
+) -> http.server.HTTPServer:
     """
     Start the MCP filesystem server in a background daemon thread.
-    Binds to 127.0.0.1 (localhost only).
+    Binds to 0.0.0.0 by default so Docker containers can reach it via
+    host.docker.internal.  Pass host="127.0.0.1" to restrict to localhost.
     Returns the HTTPServer instance; call .shutdown() to stop.
     """
     if directory is None:
         directory = os.getcwd()
     directory = str(pathlib.Path(directory).resolve())
-    httpd = http.server.HTTPServer(("127.0.0.1", port), _make_handler(directory))
+    httpd = http.server.HTTPServer((host, port), _make_handler(directory))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
 
