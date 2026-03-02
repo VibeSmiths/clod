@@ -401,20 +401,20 @@ git config core.hooksPath .githooks
 
 ### Help
 
-![help](screenshots/help.png)
+![help](assets/help.png)
 
 ### Header — default
 
-![header default](screenshots/header_default.png)
+![header default](assets/header_default.png)
 
 ### Header — pipeline active
 
-![header pipeline](screenshots/header_pipeline.png)
+![header pipeline](assets/header_pipeline.png)
 
 ### Header — token budget warning (45%)
 
-![header tokens](screenshots/header_tokens.png)
+![header tokens](assets/header_tokens.png)
 
 ### Header — offline mode (86% used)
 
-![header offline](screenshots/header_offline.png)
+![header offline](assets/header_offline.png)
