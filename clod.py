@@ -84,6 +84,18 @@ PIPELINE_CONFIGS: dict[str, dict] = {
     },
 }
 
+# Intent → model mapping for smart routing (Phase 3).
+# None means the intent is handled by a non-model service (Phase 4).
+INTENT_MODEL_MAP: dict[str, str | None] = {
+    "chat": "llama3.1:8b",
+    "code": "qwen2.5-coder:14b",
+    "reason": "deepseek-r1:14b",
+    "vision": "qwen2.5vl:7b",
+    "image_gen": None,  # Phase 4
+    "image_edit": None,  # Phase 4
+    "video_gen": None,  # Phase 4
+}
+
 # Token-budget thresholds (fraction of session budget)
 TOKEN_WARN = 0.80  # yellow warning
 TOKEN_OFFER = 0.95  # prompt to go offline
@@ -659,6 +671,38 @@ def _ensure_model_ready(
     _vram_transition_panel("Ready", console_obj)
     session_state["model"] = target
     return True
+
+
+def _route_to_model(
+    intent: str,
+    confidence: float,
+    session_state: dict,
+    console_obj,
+) -> bool:
+    """Route to appropriate model based on classified intent.
+
+    Returns True if routing proceeded (or was skipped), False if switch failed.
+    """
+    if not session_state.get("intent_enabled", True):
+        return True
+    if confidence < 0.8:
+        return True
+    target = INTENT_MODEL_MAP.get(intent)
+    if target is None:
+        return True  # non-model intents (Phase 4)
+    current = session_state["model"]
+    if current == target:
+        return True
+    # Don't auto-route away from cloud models
+    if any(current.startswith(p) for p in CLOUD_MODEL_PREFIXES):
+        return True
+    console_obj.print(f"[cyan]Switching to [bold]{target}[/bold] for {intent}...[/cyan]")
+    ok = _ensure_model_ready(
+        target, session_state["cfg"], console_obj, session_state, confirm=False
+    )
+    if not ok:
+        console_obj.print("[dim]Model switch failed, continuing with current model.[/dim]")
+    return ok
 
 
 def _prepare_for_gpu_service(
