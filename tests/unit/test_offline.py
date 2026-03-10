@@ -79,19 +79,19 @@ def test_online_indicator_in_header(monkeypatch):
 def test_search_toggle_on(monkeypatch, mock_session_state):
     monkeypatch.setattr(clod, "console", Console(file=io.StringIO(), force_terminal=True))
     mock_session_state["features"] = {"web_search_enabled": False}
-    clod.handle_slash("/search on", [], mock_session_state)
+    clod.handle_slash("/search on", mock_session_state, [])
     assert mock_session_state["features"]["web_search_enabled"] is True
 
 
 def test_search_toggle_off(monkeypatch, mock_session_state):
     monkeypatch.setattr(clod, "console", Console(file=io.StringIO(), force_terminal=True))
     mock_session_state["features"] = {"web_search_enabled": True}
-    clod.handle_slash("/search off", [], mock_session_state)
+    clod.handle_slash("/search off", mock_session_state, [])
     assert mock_session_state["features"]["web_search_enabled"] is False
 
 
 def test_search_toggle_no_arg(monkeypatch, mock_session_state):
     monkeypatch.setattr(clod, "console", Console(file=io.StringIO(), force_terminal=True))
     mock_session_state["features"] = {"web_search_enabled": True}
-    clod.handle_slash("/search", [], mock_session_state)
+    clod.handle_slash("/search", mock_session_state, [])
     assert mock_session_state["features"]["web_search_enabled"] is False

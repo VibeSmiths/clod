@@ -381,7 +381,13 @@ def tool_web_search(args: dict, searxng_url: str) -> str:
         return f"Search error: {e}"
 
 
-def execute_tool(name: str, args: dict, console: Console, cfg: dict) -> str:
+def execute_tool(
+    name: str,
+    args: dict,
+    console: Console,
+    cfg: dict,
+    features: Optional[dict] = None,
+) -> str:
     if name == "bash_exec":
         return tool_bash_exec(args, console)
     elif name == "read_file":
@@ -389,6 +395,8 @@ def execute_tool(name: str, args: dict, console: Console, cfg: dict) -> str:
     elif name == "write_file":
         return tool_write_file(args)
     elif name == "web_search":
+        if features and not features.get("web_search_enabled", True):
+            return "Web search is disabled. Use /search on to re-enable."
         return tool_web_search(args, cfg["searxng_url"])
     else:
         return f"Unknown tool: {name}"
@@ -853,7 +861,30 @@ def _compute_features(env_vars: dict, health: dict) -> dict[str, bool]:
         # Offline by default unless an Anthropic key is configured.
         # Ollama always runs locally; offline mode only gates Claude/cloud calls.
         "offline_default": not has_anthropic_key,
+        # User-toggleable web search flag (independent of SearXNG health).
+        # Defaults to True; toggled via /search command.
+        "web_search_enabled": True,
     }
+
+
+# ── Offline Gating ──────────────────────────────────────────────────────────
+
+
+def _is_cloud_request(model: str) -> bool:
+    """Return True if *model* targets a cloud provider (Claude, GPT, etc.)."""
+    return any(model.startswith(p) for p in CLOUD_MODEL_PREFIXES)
+
+
+def _enforce_offline(model: str, session_state: dict) -> Optional[str]:
+    """Return an error message if *model* is blocked by offline mode, else None."""
+    if not session_state.get("offline", False):
+        return None
+    if _is_cloud_request(model):
+        return (
+            f"Cloud model '{model}' blocked -- offline mode active. "
+            "Use /offline off to re-enable."
+        )
+    return None
 
 
 def _compose_base(cfg: dict) -> list[str]:
@@ -1879,15 +1910,17 @@ def print_header(
     tools_on: bool,
     budget: Optional[TokenBudget] = None,
     offline: bool = False,
+    web_search: bool = True,
 ) -> None:
     active = f"pipeline:{pipeline}" if pipeline else model
     tools_str = "[green]on[/green]" if tools_on else "[dim]off[/dim]"
     mode_str = "[bold red]OFFLINE[/bold red]" if offline else "[dim]online[/dim]"
+    search_str = "[green]search: on[/green]" if web_search else "[dim]search: off[/dim]"
     tok_str = f"  •  tokens: {budget.status_str()}" if budget and budget.used > 0 else ""
     console.print(
         Panel(
             f"[bold cyan]clod[/bold cyan] [dim]v{__version__}[/dim]  •  "
-            f"[bold]{active}[/bold]  •  tools: {tools_str}  •  {mode_str}{tok_str}\n"
+            f"[bold]{active}[/bold]  •  tools: {tools_str}  •  {mode_str}  •  {search_str}{tok_str}\n"
             f"[dim]Type [bold]/help[/bold] for commands, [bold]Ctrl+D[/bold] to exit[/dim]",
             border_style="cyan",
             expand=False,
@@ -1909,6 +1942,7 @@ def print_help() -> None:
                     "  [yellow]/pipeline [/yellow][dim]<name|off>[/dim]   use a two-stage pipeline",
                     "  [yellow]/tools [/yellow][dim][on|off][/dim]         toggle tool use",
                     "  [yellow]/offline [/yellow][dim][on|off][/dim]       toggle offline mode (local only)",
+                    "  [yellow]/search [/yellow][dim][on|off][/dim]        toggle web search (SearXNG)",
                     "  [yellow]/tokens[/yellow]                  show session Claude token usage",
                     "  [yellow]/system [/yellow][dim]<prompt>[/dim]        set system prompt",
                     "  [yellow]/clear[/yellow]                   clear conversation history",
@@ -2005,9 +2039,10 @@ def infer(
     # Offline: strip pipeline and redirect cloud models to local default
     if offline:
         pipeline = None
-        if any(model.startswith(p) for p in CLOUD_MODEL_PREFIXES):
+        block_msg = _enforce_offline(model, session_state or {"offline": True})
+        if block_msg:
             model = cfg["default_model"]
-            console.print(f"[dim][offline] using local model: {model}[/dim]")
+            console.print(f"[dim][offline] {block_msg} Using local model: {model}[/dim]")
 
     features = session_state.get("features") if session_state else None
     adapter = pick_adapter(model, pipeline, cfg, features)
@@ -2060,7 +2095,7 @@ def infer(
         # Execute each tool, add results
         for tc in tool_calls:
             print_tool_call(tc["name"], tc["arguments"])
-            result = execute_tool(tc["name"], tc["arguments"], console, cfg)
+            result = execute_tool(tc["name"], tc["arguments"], console, cfg, features=features)
             print_tool_result(tc["name"], result)
             messages.append(
                 {
@@ -2169,6 +2204,27 @@ def handle_slash(
         else:
             session_state["offline"] = True
             console.print("[dim]Offline mode [red]enabled[/red] — local model only.[/dim]")
+        ws = session_state.get("features", {}).get("web_search_enabled", True)
+        console.print(
+            f"[dim]Offline: {'ON' if session_state['offline'] else 'OFF'} | "
+            f"Web search: {'ON' if ws else 'OFF'}[/dim]"
+        )
+
+    elif verb == "/search":
+        features = session_state.get("features", {})
+        if arg.lower() in ("off", "false", "0"):
+            features["web_search_enabled"] = False
+            console.print("[dim]Web search [red]disabled[/red][/dim]")
+        elif arg.lower() in ("on", "true", "1"):
+            features["web_search_enabled"] = True
+            console.print("[dim]Web search [green]enabled[/green][/dim]")
+        else:
+            # Toggle
+            current = features.get("web_search_enabled", True)
+            features["web_search_enabled"] = not current
+            state = "[green]enabled[/green]" if not current else "[red]disabled[/red]"
+            console.print(f"[dim]Web search {state}[/dim]")
+        session_state["features"] = features
 
     elif verb == "/tokens":
         budget: TokenBudget = session_state["budget"]
@@ -2568,7 +2624,14 @@ def run_repl(
     if system:
         messages.append({"role": "system", "content": system})
 
-    print_header(model, pipeline, tools_on, budget, offline=offline_default)
+    print_header(
+        model,
+        pipeline,
+        tools_on,
+        budget,
+        offline=offline_default,
+        web_search=(features or {}).get("web_search_enabled", True),
+    )
 
     # MCP filesystem server — prompt before PromptSession init so that
     # prompt_toolkit's win32 console-mode changes don't break console.input().
