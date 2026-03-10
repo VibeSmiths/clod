@@ -2347,11 +2347,19 @@ def handle_slash(
 
     elif verb == "/model":
         if arg:
-            session_state["model"] = arg
-            session_state["pipeline"] = None
-            console.print(f"[dim]Model → [bold]{arg}[/bold][/dim]")
-            if not any(arg.startswith(p) for p in CLOUD_MODEL_PREFIXES):
-                warmup_ollama_model(arg, session_state["cfg"])
+            if any(arg.startswith(p) for p in CLOUD_MODEL_PREFIXES):
+                session_state["model"] = arg
+                session_state["pipeline"] = None
+                console.print(f"[dim]Model → [bold]{arg}[/bold][/dim]")
+            else:
+                ok = _ensure_model_ready(
+                    arg, session_state["cfg"], console, session_state, confirm=True
+                )
+                if ok:
+                    session_state["pipeline"] = None
+                    console.print(f"[dim]Model → [bold]{arg}[/bold][/dim]")
+                else:
+                    console.print("[dim]Model switch cancelled.[/dim]")
         else:
             console.print(f"[dim]Current model: [bold]{session_state['model']}[/bold][/dim]")
 
@@ -2501,10 +2509,12 @@ def handle_slash(
                 )
             )
             if arg.lower() == "use" and rec:
-                session_state["model"] = rec
-                session_state["pipeline"] = None
-                console.print(f"[dim]Model → [bold]{rec}[/bold][/dim]")
-                warmup_ollama_model(rec, session_state["cfg"])
+                ok = _ensure_model_ready(
+                    rec, session_state["cfg"], console, session_state, confirm=False
+                )
+                if ok:
+                    session_state["pipeline"] = None
+                    console.print(f"[dim]Model → [bold]{rec}[/bold][/dim]")
 
     elif verb == "/sd":
         sub = arg.lower().strip()
@@ -2524,6 +2534,21 @@ def handle_slash(
                     f"[dim]Switching to [bold]{sub}[/bold] mode → {svc}  "
                     f"(stopping {current}, restarting Open-WebUI…)[/dim]"
                 )
+                # Free VRAM before SD/ComfyUI
+                loaded = _get_loaded_models(session_state["cfg"])
+                if loaded:
+                    session_state["_prev_model"] = loaded[0].get("name", "")
+                    for m in loaded:
+                        name = m.get("name", "")
+                        if name:
+                            _unload_model(name, session_state["cfg"])
+                    _vram_transition_panel("GPU freed", console)
+                # Verify VRAM is actually free via nvidia-smi
+                if not _verify_vram_free():
+                    console.print(
+                        "[yellow]Warning: VRAM may not be fully freed. "
+                        "SD/ComfyUI may encounter memory issues.[/yellow]"
+                    )
                 ok, msg = sd_switch_mode(sub, session_state["cfg"])
                 if ok:
                     session_state["sd_mode"] = sub
@@ -2573,6 +2598,7 @@ def handle_slash(
                             f"[dim]GPU free: [bold]{gpu['free_mb']:,} MiB[/bold]  •  "
                             f"Recommended LLM: [bold cyan]{rec or 'none'}[/bold cyan][/dim]"
                         )
+                    _restore_after_gpu_service(session_state["cfg"], console, session_state)
                 else:
                     console.print(f"[red]Stop errors: {msg} {msg2}[/red]")
 
@@ -2580,6 +2606,21 @@ def handle_slash(
             # ── Restart last-active mode ──────────────────────────────────
             mode = session_state.get("sd_mode", session_state["cfg"].get("sd_mode", "image"))
             console.print(f"[dim]Starting [bold]{mode}[/bold] mode…[/dim]")
+            # Free VRAM before SD/ComfyUI
+            loaded = _get_loaded_models(session_state["cfg"])
+            if loaded:
+                session_state["_prev_model"] = loaded[0].get("name", "")
+                for m in loaded:
+                    name = m.get("name", "")
+                    if name:
+                        _unload_model(name, session_state["cfg"])
+                _vram_transition_panel("GPU freed", console)
+            # Verify VRAM is actually free via nvidia-smi
+            if not _verify_vram_free():
+                console.print(
+                    "[yellow]Warning: VRAM may not be fully freed. "
+                    "SD/ComfyUI may encounter memory issues.[/yellow]"
+                )
             ok, msg = sd_switch_mode(mode, session_state["cfg"])
             if ok:
                 console.print(f"[green]SD started in [bold]{mode}[/bold] mode.[/green]")
