@@ -58,11 +58,11 @@ Plans:
   1. When user types a reasoning question, clod selects deepseek-r1:14b; for code, qwen2.5-coder:14b; for chat, llama3.1:8b; for vision, qwen2.5vl:7b
   2. Before switching models, a confirmation message appears ("Switching to X for Y...") that auto-proceeds unless cancelled
   3. A Rich spinner shows during quick model swaps, and a progress bar shows during first-time model pulls
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
+- [ ] 03-01-PLAN.md — INTENT_MODEL_MAP + _route_to_model() function + REPL wiring + routing tests
+- [ ] 03-02-PLAN.md — Upgrade ollama_pull() to Rich Progress bar + spinner verification
 
 ### Phase 4: Media Generation Pipeline
 **Goal**: Users generate images and videos through natural language, with automatic docker profile orchestration
