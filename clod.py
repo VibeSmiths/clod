@@ -37,6 +37,13 @@ try:
     HAS_PSUTIL = True
 except ImportError:
     HAS_PSUTIL = False
+
+try:
+    from intent import classify_intent
+
+    HAS_INTENT = True
+except ImportError:
+    HAS_INTENT = False
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
@@ -2162,6 +2169,10 @@ def print_help() -> None:
                     "  [yellow]/mcp[/yellow]                     show MCP filesystem server status and endpoints",
                     "  [yellow]/sd [/yellow][dim][image|video|stop|start][/dim]  switch image/video mode or stop/start SD",
                     "  [yellow]/services[/yellow]               show docker service health status",
+                    "  [yellow]/intent[/yellow]                  show current intent classification state",
+                    "  [yellow]/intent auto[/yellow]             re-enable auto-classification",
+                    "  [yellow]/intent verbose[/yellow]          toggle verbose intent debug output",
+                    "  [yellow]/intent [/yellow][dim]<text>[/dim]          one-shot classify text",
                     "  [yellow]/services start[/yellow]         start missing core services via docker compose",
                     "  [yellow]/services stop[/yellow]          stop all core services (docker compose down)",
                     "  [yellow]/services reset [/yellow][dim][name|all][/dim]  wipe data and redeploy service(s)",
@@ -2350,14 +2361,22 @@ def handle_slash(
             if any(arg.startswith(p) for p in CLOUD_MODEL_PREFIXES):
                 session_state["model"] = arg
                 session_state["pipeline"] = None
+                session_state["intent_enabled"] = False
                 console.print(f"[dim]Model → [bold]{arg}[/bold][/dim]")
+                console.print(
+                    "[dim]Intent auto-classification disabled. Use /intent auto to re-enable.[/dim]"
+                )
             else:
                 ok = _ensure_model_ready(
                     arg, session_state["cfg"], console, session_state, confirm=True
                 )
                 if ok:
                     session_state["pipeline"] = None
+                    session_state["intent_enabled"] = False
                     console.print(f"[dim]Model → [bold]{arg}[/bold][/dim]")
+                    console.print(
+                        "[dim]Intent auto-classification disabled. Use /intent auto to re-enable.[/dim]"
+                    )
                 else:
                     console.print("[dim]Model switch cancelled.[/dim]")
         else:
@@ -2835,6 +2854,49 @@ def handle_slash(
                 )
             )
 
+    elif verb == "/intent":
+        if not HAS_INTENT:
+            console.print("[red]Intent classification module not available (import failed).[/red]")
+        elif arg.lower() == "auto":
+            session_state["intent_enabled"] = True
+            console.print("[dim]Intent auto-classification [green]enabled[/green].[/dim]")
+        elif arg.lower() == "verbose":
+            session_state["intent_verbose"] = not session_state.get("intent_verbose", False)
+            state = "enabled" if session_state["intent_verbose"] else "disabled"
+            color = "green" if session_state["intent_verbose"] else "red"
+            console.print(f"[dim]Intent verbose [{color}]{state}[/{color}].[/dim]")
+        elif arg:
+            # One-shot classification
+            intent, confidence = classify_intent(arg)
+            console.print(
+                Panel(
+                    f"[bold]{intent}[/bold]  confidence: {confidence:.2f}",
+                    title="[cyan]intent classification[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                )
+            )
+        else:
+            # Status
+            auto_state = (
+                "[green]on[/green]" if session_state.get("intent_enabled") else "[red]off[/red]"
+            )
+            verbose_state = (
+                "[green]on[/green]" if session_state.get("intent_verbose") else "[red]off[/red]"
+            )
+            last = session_state.get("last_intent") or "none"
+            conf = session_state.get("last_confidence", 0.0)
+            console.print(
+                Panel(
+                    f"Auto-classify: {auto_state}\n"
+                    f"Verbose:       {verbose_state}\n"
+                    f"Last intent:   [bold]{last}[/bold]  ({conf:.2f})",
+                    title="[cyan]intent state[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                )
+            )
+
     else:
         return False
 
@@ -2869,6 +2931,10 @@ def run_repl(
         "mcp_dir": None,
         "features": features or {},
         "health": health or {},
+        "intent_enabled": True,
+        "last_intent": None,
+        "last_confidence": 0.0,
+        "intent_verbose": False,
     }
 
     messages: list = []
@@ -2938,6 +3004,22 @@ def run_repl(
             continue
 
         messages.append({"role": "user", "content": user_input})
+
+        # -- Intent Classification (Phase 2) ---
+        if HAS_INTENT and session_state["intent_enabled"]:
+            intent, confidence = classify_intent(user_input)
+            session_state["last_intent"] = intent
+            session_state["last_confidence"] = confidence
+            if session_state.get("intent_verbose"):
+                console.print(f"[dim]Intent: {intent} ({confidence:.2f})[/dim]")
+            if confidence < 0.8:
+                console.print(
+                    f"[dim]Low confidence intent: [bold]{intent}[/bold] ({confidence:.2f})"
+                    " -- proceeding as chat[/dim]"
+                )
+            # Note: actual model switching happens in Phase 3 (Smart Model Routing)
+            # For now, classification is passive -- it classifies but doesn't switch models
+
         reply = infer(
             messages,
             session_state["model"],
