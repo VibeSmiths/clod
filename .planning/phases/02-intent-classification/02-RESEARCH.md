@@ -1,6 +1,6 @@
 # Phase 2: Intent Classification - Research
 
-**Researched:** 2026-03-10
+**Researched:** 2026-03-10 (re-researched)
 **Domain:** NLP intent classification, embedding-based semantic routing, keyword/regex pattern matching
 **Confidence:** HIGH
 
@@ -8,11 +8,13 @@
 
 Phase 2 requires classifying user input into one of 7 intents (chat, code, reason, vision, image-gen, image-edit, video-gen) in under 100ms on CPU without any LLM call. The user has locked a hybrid architecture: keyword/regex rules for obvious cases, lightweight embedding model for ambiguous input.
 
-The critical constraint is PyInstaller bundling -- sentence-transformers pulls in PyTorch (~1.5-1.8GB), which is unacceptable. The solution is to use a pre-exported quantized ONNX model (all-MiniLM-L6-v2 INT8 at ~23MB) loaded directly via `onnxruntime` + `tokenizers` (HuggingFace's Rust-based tokenizer, ~3.4MB wheel). This avoids PyTorch entirely while maintaining sub-20ms single-sentence inference on CPU.
+The critical constraint is PyInstaller bundling -- sentence-transformers pulls in PyTorch (~1.5-1.8GB), which is unacceptable. The solution is to use a pre-exported quantized ONNX model loaded directly via `onnxruntime` + `tokenizers` (HuggingFace's Rust-based tokenizer, ~3.4MB wheel). This avoids PyTorch entirely while maintaining sub-20ms single-sentence inference on CPU.
 
-For the semantic layer, we should NOT use `semantic-router` (aurelio-labs) as a dependency -- it adds unnecessary abstraction and its own dependency chain. Instead, implement a simple cosine similarity comparison against pre-computed route embeddings. The pattern is straightforward: embed the user query, compare against 5-10 seed utterances per intent, return the highest-scoring intent above the 0.8 confidence threshold.
+**IMPORTANT CORRECTION from previous research:** The AVX2-compatible quantized model file is `model_quint8_avx2.onnx` (UNSIGNED int8), NOT `model_qint8_avx2.onnx`. The signed int8 variants (`model_qint8_*`) are only for AVX512/VNNI CPUs. Using the wrong quantization format on AVX2 causes incorrect predictions due to saturation in the VPMADDUBSW instruction. This was a confirmed onnxruntime bug (issue #6004, resolved by using unsigned int8 for AVX2).
 
-**Primary recommendation:** Use `onnxruntime` + `tokenizers` + pre-exported quantized ONNX model (~23MB) for the embedding layer. Implement keyword rules as the fast path, embedding similarity as the fallback. Bundle model files in PyInstaller spec.
+For the semantic layer, implement a simple cosine similarity comparison against pre-computed route centroids. The pattern is: embed the user query, compare against 7 intent centroids (mean of 5-10 seed utterances per intent), return the highest-scoring intent above the 0.8 confidence threshold. Centroid comparison is sufficient for 7 well-separated intents and keeps comparison count minimal.
+
+**Primary recommendation:** Use `onnxruntime` + `tokenizers` + `model_quint8_avx2.onnx` (23MB, unsigned int8) for the embedding layer. Implement keyword rules as the fast path, embedding similarity as the fallback. Bundle model files in PyInstaller spec.
 
 <user_constraints>
 ## User Constraints (from CONTEXT.md)
@@ -49,9 +51,9 @@ For the semantic layer, we should NOT use `semantic-router` (aurelio-labs) as a 
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| INTENT-01 | User input is classified into one of 6 intents (chat, code, reason, vision, image-gen, video-gen) before routing | Hybrid keyword+embedding architecture; ONNX model for semantic similarity; route definitions with seed utterances |
-| INTENT-02 | Classification completes in under 100ms without GPU usage (CPU-only) | Quantized INT8 ONNX model (~23MB) achieves ~20ms single-sentence latency on CPU; keyword layer is sub-1ms |
-| INTENT-03 | User can override classification by using `/model` to manually select a model | Session state flag `intent_enabled` set False on `/model`, re-enabled via `/intent auto` |
+| INTENT-01 | User input is classified into one of 6 intents (chat, code, reason, vision, image-gen, video-gen) before routing | Hybrid keyword+embedding architecture; ONNX model for semantic similarity; 7 route definitions (6 + image-edit sub-intent) with seed utterances; centroid-based comparison |
+| INTENT-02 | Classification completes in under 100ms without GPU usage (CPU-only) | Quantized UINT8 ONNX model (model_quint8_avx2.onnx, 23MB) achieves ~20ms single-sentence latency on CPU; keyword layer is sub-1ms; centroid comparison is 7 dot products |
+| INTENT-03 | User can override classification by using `/model` to manually select a model | Session state flag `intent_enabled` set False on `/model`, re-enabled via `/intent auto`; `/intent` slash command for debug |
 </phase_requirements>
 
 ## Standard Stack
@@ -64,11 +66,31 @@ For the semantic layer, we should NOT use `semantic-router` (aurelio-labs) as a 
 | numpy | >=1.24.0 | Cosine similarity computation | Already likely transitive dep; minimal overhead |
 
 ### Pre-exported Model Files (bundled, not pip-installed)
-| File | Size | Purpose |
-|------|------|---------|
-| model_qint8_avx2.onnx | ~23 MB | Quantized INT8 embedding model (Windows AVX2) |
-| tokenizer.json | ~466 KB | Fast tokenizer vocabulary and config |
-| route_embeddings.npz | ~50 KB (est.) | Pre-computed embeddings for seed utterances |
+| File | Size | Purpose | Source |
+|------|------|---------|--------|
+| model_quint8_avx2.onnx | ~23 MB | Quantized UINT8 embedding model (AVX2 compatible) | [HuggingFace all-MiniLM-L6-v2/onnx](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/tree/main/onnx) |
+| tokenizer.json | ~466 KB | Fast tokenizer vocabulary and config | Same repo, root directory |
+| route_embeddings.npz | ~50 KB (est.) | Pre-computed centroids for 7 intent routes | Generated by build_routes.py script |
+
+### ONNX Model File Selection Guide (RESOLVED)
+
+**This was an open question -- now resolved with HIGH confidence:**
+
+The official all-MiniLM-L6-v2 repository provides these quantized ONNX variants:
+
+| File | Quantization | Target CPU | Size |
+|------|-------------|------------|------|
+| model_quint8_avx2.onnx | UINT8 (unsigned) | AVX2 (most modern x86) | 23 MB |
+| model_qint8_avx512.onnx | INT8 (signed) | AVX-512 only | 23 MB |
+| model_qint8_avx512_vnni.onnx | INT8 (signed) | AVX-512 VNNI only | 23 MB |
+| model_qint8_arm64.onnx | INT8 (signed) | ARM64 | 23 MB |
+
+**Decision: Ship `model_quint8_avx2.onnx`** (unsigned INT8, AVX2).
+- AVX2 is supported on all modern x86-64 CPUs (Intel Haswell 2013+, AMD Excavator 2015+)
+- The UNSIGNED variant avoids the saturation bug in VPMADDUBSW on non-VNNI hardware (onnxruntime issue #6004)
+- The signed INT8 variants (`model_qint8_*`) produce INCORRECT results on AVX2-only CPUs
+- The user's machine is Windows x86-64, so AVX2 is guaranteed
+- If ARM or Linux support is needed later, ship additional variants and select at runtime
 
 ### Alternatives Considered
 | Instead of | Could Use | Tradeoff |
@@ -86,11 +108,26 @@ For the semantic layer, we should NOT use `semantic-router` (aurelio-labs) as a 
 pip install onnxruntime tokenizers numpy
 ```
 
+**Model file download (one-time build step):**
+```bash
+# Download from HuggingFace -- run once, commit to repo
+pip install huggingface-hub
+python -c "
+from huggingface_hub import hf_hub_download
+repo = 'sentence-transformers/all-MiniLM-L6-v2'
+for f in ['onnx/model_quint8_avx2.onnx', 'tokenizer.json']:
+    hf_hub_download(repo, f, local_dir='models/intent')
+"
+# Move ONNX file out of onnx/ subfolder
+mv models/intent/onnx/model_quint8_avx2.onnx models/intent/
+rmdir models/intent/onnx
+```
+
 **PyInstaller bundling additions to clod.spec:**
 ```python
 # Intent classification model files
 intent_model_datas = [
-    ('models/intent/model_qint8_avx2.onnx', 'models/intent'),
+    ('models/intent/model_quint8_avx2.onnx', 'models/intent'),
     ('models/intent/tokenizer.json', 'models/intent'),
     ('models/intent/route_embeddings.npz', 'models/intent'),
 ]
@@ -104,9 +141,9 @@ clod.py                          # Main file (existing)
 intent.py                        # NEW: Intent classification module
 models/
   intent/
-    model_qint8_avx2.onnx       # Quantized ONNX embedding model
+    model_quint8_avx2.onnx      # Quantized ONNX embedding model (UINT8, AVX2)
     tokenizer.json               # HuggingFace fast tokenizer config
-    route_embeddings.npz         # Pre-computed intent route embeddings
+    route_embeddings.npz         # Pre-computed intent route centroids
     build_routes.py              # Script to generate route_embeddings.npz
 tests/
   unit/
@@ -161,10 +198,10 @@ def _classify_keywords(text: str) -> Optional[Tuple[str, float]]:
 # ── Layer 2: Embedding Similarity ────────────────────────────────────────────
 
 def _classify_embedding(text: str) -> Tuple[str, float]:
-    """Layer 2: Semantic similarity against route embeddings."""
+    """Layer 2: Semantic similarity against route centroids."""
     query_emb = _embed(text)  # shape: (384,)
     # Cosine similarity against pre-computed route centroids
-    similarities = _cosine_similarity(query_emb, _route_embeddings)
+    similarities = _cosine_similarity(query_emb, _route_centroids)
     best_idx = similarities.argmax()
     return (INTENTS[best_idx], float(similarities[best_idx]))
 
@@ -172,7 +209,7 @@ def _classify_embedding(text: str) -> Tuple[str, float]:
 
 def classify_intent(text: str, threshold: float = 0.8) -> Tuple[str, float]:
     """Classify user input into an intent.
-    Returns (intent, confidence). If below threshold, returns ("chat", confidence).
+    Returns (intent, confidence). If below threshold, caller should prompt user.
     """
     # Layer 1: keyword rules (fast path)
     kw_result = _classify_keywords(text)
@@ -181,16 +218,13 @@ def classify_intent(text: str, threshold: float = 0.8) -> Tuple[str, float]:
 
     # Layer 2: embedding similarity (slow path, still <100ms)
     intent, confidence = _classify_embedding(text)
-    if confidence >= threshold:
-        return (intent, confidence)
-
-    # Below threshold: default to chat (caller should prompt user)
     return (intent, confidence)
 ```
 
 ### Pattern 2: ONNX Embedding Without PyTorch
 **What:** Load ONNX model + tokenizer directly, perform mean pooling and normalization manually.
 **When to use:** Producing embeddings for the similarity layer.
+**Critical detail:** The ONNX model inputs vary by export. Check `session.get_inputs()` to determine whether `token_type_ids` is required.
 **Example:**
 ```python
 import numpy as np
@@ -208,23 +242,24 @@ class IntentEmbedder:
             model_path,
             providers=["CPUExecutionProvider"],
         )
+        # Detect required inputs (some ONNX exports omit token_type_ids)
+        self._input_names = [inp.name for inp in self._session.get_inputs()]
 
     def embed(self, text: str) -> np.ndarray:
         """Embed a single text string. Returns (384,) float32 array."""
         encoded = self._tokenizer.encode(text)
         input_ids = np.array([encoded.ids], dtype=np.int64)
         attention_mask = np.array([encoded.attention_mask], dtype=np.int64)
-        # token_type_ids may be needed for some models
-        token_type_ids = np.zeros_like(input_ids)
 
-        outputs = self._session.run(
-            None,
-            {
-                "input_ids": input_ids,
-                "attention_mask": attention_mask,
-                "token_type_ids": token_type_ids,
-            },
-        )
+        feeds = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
+        # Only add token_type_ids if the model expects it
+        if "token_type_ids" in self._input_names:
+            feeds["token_type_ids"] = np.zeros_like(input_ids)
+
+        outputs = self._session.run(None, feeds)
         # outputs[0] shape: (1, seq_len, 384) -- token embeddings
         token_embs = outputs[0]
         # Mean pooling over non-padding tokens
@@ -240,52 +275,65 @@ class IntentEmbedder:
 ### Pattern 3: Session State Integration
 **What:** Extend session_state with intent classification fields; disable on `/model`.
 **When to use:** REPL loop integration.
+**Integration point:** Between `user_input` capture (line 2940) and `infer()` call (line 2941).
 **Example:**
 ```python
-# In run_repl(), extend session_state:
+# In run_repl(), extend session_state (line 2859):
 session_state = {
     # ... existing fields ...
     "intent_enabled": True,      # False after /model, True after /intent auto
     "last_intent": None,         # Last classified intent string
     "last_confidence": 0.0,      # Last confidence score
+    "intent_verbose": False,     # Verbose debug mode
 }
 
-# In REPL loop, between user_input and infer():
+# In REPL loop, between user_input and infer() (after line 2940):
 if session_state["intent_enabled"]:
     intent, confidence = classify_intent(user_input)
     session_state["last_intent"] = intent
     session_state["last_confidence"] = confidence
+    if session_state.get("intent_verbose"):
+        console.print(f"[dim]  intent={intent} conf={confidence:.2f}[/dim]")
     if confidence < 0.8:
         # Prompt user (Claude's discretion on format)
         pass
+    # NOTE: This phase only classifies -- Phase 3 acts on the result for model routing
 
-# In handle_slash() for /model:
+# In handle_slash() for /model (line 2351):
 elif verb == "/model":
     # ... existing logic ...
     session_state["intent_enabled"] = False
     console.print("[dim]Intent auto-classification disabled. Use /intent auto to re-enable.[/dim]")
 ```
 
-### Pattern 4: Route Embedding Pre-computation
-**What:** Pre-compute and store embeddings for seed utterances, load at startup.
+### Pattern 4: Route Embedding Pre-computation (Centroid Approach)
+**What:** Pre-compute CENTROID embeddings (mean of seed utterances per intent), stored as .npz.
 **When to use:** Build step (run once), load at runtime.
+**Why centroids, not all-utterances (RESOLVED):**
+- For 7 well-separated intent classes, centroid comparison requires only 7 dot products
+- All-utterances comparison would require ~50 dot products (7 intents x ~7 utterances)
+- Research confirms centroid classification achieves "decent accuracy" for well-separated classes
+- Our intents ARE well-separated (chat vs code vs image-gen are semantically distant)
+- If testing reveals poor discrimination on specific intent pairs (e.g., code vs reason), add more seed utterances to those specific intents rather than switching to all-utterances
 **Example:**
 ```python
 # models/intent/build_routes.py -- run once to generate route_embeddings.npz
 ROUTES = {
     "chat": [
         "tell me a joke", "how are you", "what's up", "hello",
-        "thanks", "good morning", "let's chat",
+        "thanks", "good morning", "let's chat", "what do you think",
     ],
     "code": [
         "write a python function", "implement a class",
         "debug this code", "refactor the login module",
         "fix the bug in", "create a REST API",
+        "add error handling to this function",
     ],
     "reason": [
         "explain why this happens", "analyze the tradeoffs",
         "compare these approaches", "what are the pros and cons",
         "evaluate this architecture", "why does this work",
+        "break down the reasoning behind",
     ],
     "vision": [
         "what's in this image", "describe this picture",
@@ -307,8 +355,36 @@ ROUTES = {
         "create an animation of", "produce a video clip",
     ],
 }
-# Embed all utterances, compute centroid per intent, save as .npz
+
+def build_centroids(embedder, routes, output_path):
+    """Embed all seed utterances, compute per-intent centroid, save as .npz."""
+    intent_names = list(routes.keys())
+    centroids = []
+    for intent in intent_names:
+        utterance_embs = np.stack([embedder.embed(u) for u in routes[intent]])
+        centroid = utterance_embs.mean(axis=0)
+        # Re-normalize centroid after averaging
+        centroid = centroid / np.linalg.norm(centroid).clip(min=1e-9)
+        centroids.append(centroid)
+
+    centroid_matrix = np.stack(centroids)  # shape: (7, 384)
+    np.savez_compressed(
+        output_path,
+        intent_names=np.array(intent_names),
+        centroids=centroid_matrix,
+    )
 ```
+
+### Pattern 5: Vision Intent Detection (RESOLVED)
+**What:** How to detect vision intent given the current codebase.
+**Key finding from code investigation:** The current codebase has NO image/attachment handling at all. Messages in the REPL loop are plain text strings (`{"role": "user", "content": user_input}`). Ollama's vision API expects images as base64-encoded strings in a separate `images` array on the message object -- but clod doesn't implement this yet.
+
+**Recommendation for Phase 2:** Detect vision intent via KEYWORDS ONLY (e.g., "describe this image", "what's in this picture", "OCR this screenshot"). Do NOT attempt to detect image attachments because:
+1. The codebase has no image attachment mechanism
+2. Image attachment support would be a separate feature (likely Phase 4+ or a dedicated effort)
+3. Keyword-based vision detection is sufficient to trigger routing to qwen2.5vl:7b
+
+**Future consideration:** When image attachments are eventually added (e.g., drag-and-drop file paths, `/image <path>` command), the vision intent classifier should also check for the presence of image data in the message. This is out of scope for Phase 2.
 
 ### Anti-Patterns to Avoid
 - **Loading PyTorch for embeddings:** The exe would balloon from ~50MB to ~1.8GB. Use ONNX runtime only.
@@ -316,6 +392,8 @@ ROUTES = {
 - **Using an LLM for classification:** Violates the <100ms CPU-only constraint. Even a tiny LLM takes seconds.
 - **Hardcoding model paths:** Use `_get_clod_root()` pattern (from Phase 1) to resolve paths relative to exe/repo root.
 - **Blocking the REPL on model load:** Use lazy loading -- first classification pays startup cost, subsequent ones are instant.
+- **Using signed INT8 model on AVX2 CPU:** Ship `model_quint8_avx2.onnx` (UNSIGNED), not `model_qint8_avx2.onnx` (does not exist) or `model_qint8_avx512.onnx` (wrong instruction set).
+- **Passing token_type_ids without checking:** Some ONNX model exports omit this input. Always check `session.get_inputs()` first.
 
 ## Don't Hand-Roll
 
@@ -336,11 +414,12 @@ ROUTES = {
 **How to avoid:** Only depend on `onnxruntime`, `tokenizers`, and `numpy`. Never import `torch` or `transformers`.
 **Warning signs:** `pip install` output showing torch being downloaded; exe size jumping above 200MB.
 
-### Pitfall 2: ONNX Model Missing token_type_ids Input
-**What goes wrong:** Some ONNX exports of MiniLM don't include token_type_ids as an input, causing inference to fail.
-**Why it happens:** Different export tools handle this differently.
-**How to avoid:** Check the model's expected inputs with `session.get_inputs()` and only pass what's required.
-**Warning signs:** ONNX runtime error about unexpected input names.
+### Pitfall 2: Wrong Quantization Format for CPU Architecture
+**What goes wrong:** Using a signed INT8 model (model_qint8_*) on an AVX2-only CPU produces incorrect embeddings.
+**Why it happens:** Saturation in the VPMADDUBSW instruction when non-VNNI hardware processes signed INT8 values. The intermediate 16-bit accumulation overflows.
+**How to avoid:** Use `model_quint8_avx2.onnx` (UNSIGNED INT8) which avoids the saturation path. The official HuggingFace repo specifically exports this variant for AVX2 compatibility.
+**Warning signs:** Embeddings that produce nonsensical similarity scores; all intents scoring similarly.
+**Source:** [onnxruntime issue #6004](https://github.com/microsoft/onnxruntime/issues/6004)
 
 ### Pitfall 3: Mean Pooling Without Attention Mask
 **What goes wrong:** Padding tokens contribute to the embedding, corrupting similarity scores.
@@ -366,11 +445,17 @@ ROUTES = {
 **How to avoid:** Either eager-load on startup (adds ~200ms to boot) or lazy-load on first user input (first response is slower). User left this as Claude's discretion.
 **Warning signs:** First interaction noticeably slower than subsequent ones.
 
+### Pitfall 7: Centroid Not Re-normalized After Averaging
+**What goes wrong:** Centroid vectors are not unit-length after averaging seed utterance embeddings, making cosine similarity via dot product return incorrect values.
+**Why it happens:** The mean of unit vectors is NOT necessarily a unit vector.
+**How to avoid:** Always L2-normalize centroids after computing the mean of seed utterance embeddings.
+**Warning signs:** Similarity scores consistently below expected range.
+
 ## Code Examples
 
 ### Cosine Similarity with Numpy
 ```python
-# Source: standard numpy pattern, verified against scikit-learn implementation
+# Source: standard numpy pattern
 import numpy as np
 
 def cosine_similarity(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
@@ -380,22 +465,21 @@ def cosine_similarity(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     return matrix @ query  # dot product of unit vectors = cosine similarity
 ```
 
-### Route Embedding Storage Format
+### Route Embedding Storage and Loading
 ```python
-# Save pre-computed route embeddings
+# Save pre-computed route centroids
 import numpy as np
 
-# centroids: dict[str, np.ndarray]  -- intent_name -> (384,) centroid vector
 intent_names = list(centroids.keys())
 centroid_matrix = np.stack([centroids[name] for name in intent_names])
 np.savez_compressed(
     "models/intent/route_embeddings.npz",
     intent_names=np.array(intent_names),
-    centroids=centroid_matrix,  # shape: (7, 384)
+    centroids=centroid_matrix,  # shape: (7, 384), L2-normalized
 )
 
 # Load at runtime
-data = np.load("models/intent/route_embeddings.npz")
+data = np.load(route_embeddings_path)
 intent_names = data["intent_names"].tolist()
 centroids = data["centroids"]  # shape: (7, 384), L2-normalized
 ```
@@ -431,14 +515,31 @@ elif verb == "/intent":
         )
 ```
 
+### REPL Integration Point
+```python
+# In the REPL loop (clod.py, after line 2940 where user_input is appended to messages):
+# Classification runs BEFORE infer() call
+
+# Key insertion point in run_repl():
+#   line 2931: user_input = user_input.strip()
+#   line 2935: if user_input.startswith("/"): handle_slash(...)
+#   line 2940: messages.append({"role": "user", "content": user_input})
+#   >>> INTENT CLASSIFICATION GOES HERE <<<
+#   line 2941: reply = infer(messages, session_state["model"], ...)
+
+# Phase 2 only classifies and stores in session_state.
+# Phase 3 will use session_state["last_intent"] to route to the correct model.
+```
+
 ## State of the Art
 
 | Old Approach | Current Approach | When Changed | Impact |
 |--------------|------------------|--------------|--------|
 | sentence-transformers + PyTorch | ONNX Runtime + tokenizers | 2024 (sbert ONNX support) | 3x CPU speedup, no PyTorch dep |
-| Float32 ONNX models | INT8 quantized ONNX | 2024 | 75% size reduction (90MB to 23MB), faster CPU inference |
+| Float32 ONNX models | UINT8/INT8 quantized ONNX | 2024 | 75% size reduction (90MB to 23MB), faster CPU inference |
 | all-mpnet-base-v2 (best quality) | all-MiniLM-L6-v2 (best speed/quality) | Ongoing | 5x faster, adequate for coarse intent classification |
 | scikit-learn cosine similarity | numpy dot product on normalized vectors | Always | Same result, no sklearn dependency |
+| Signed INT8 for all platforms | Platform-specific quantization | 2020+ | UINT8 for AVX2, INT8 for AVX512/VNNI -- avoids saturation bugs |
 
 **Deprecated/outdated:**
 - `semantic-router` (aurelio-labs): Still works but adds unnecessary abstraction for our simple use case
@@ -446,20 +547,16 @@ elif verb == "/intent":
 
 ## Open Questions
 
-1. **AVX2 vs AVX512 quantized model**
-   - What we know: Windows with modern Intel/AMD CPUs support AVX2. AVX512 is not universal.
-   - What's unclear: Whether the user's CPU supports AVX512 VNNI for the more optimized model.
-   - Recommendation: Ship `model_quint8_avx2.onnx` (23MB) as the default; it works on all modern x86 CPUs.
+All three previous open questions have been RESOLVED. No remaining open questions.
 
-2. **Centroid vs All-Utterances Comparison**
-   - What we know: Centroid (mean of seed utterances) is faster (7 comparisons). All-utterances is more accurate but slower (~50 comparisons).
-   - What's unclear: Whether centroid discrimination is sufficient for 7 intents.
-   - Recommendation: Start with centroids. If testing shows poor discrimination, switch to top-K nearest utterance voting. Both are well under 100ms.
+1. **~~AVX2 vs AVX512 quantized model~~** -- RESOLVED
+   - Ship `model_quint8_avx2.onnx` (unsigned INT8, 23MB). See "ONNX Model File Selection Guide" above.
 
-3. **Image Attachment Detection for Vision Intent**
-   - What we know: User left vision triggering as Claude's discretion.
-   - What's unclear: How image attachments are represented in the current message flow (file paths? base64?).
-   - Recommendation: Check for image file path patterns in user input as an additional signal for vision intent.
+2. **~~Centroid vs all-utterances comparison~~** -- RESOLVED
+   - Use centroids. 7 well-separated intents with 5-10 seed utterances each. Centroid comparison is 7 dot products, well under 1ms. If specific intent pairs show poor discrimination, add more seed utterances to those intents. See "Pattern 4" above.
+
+3. **~~Image attachment detection for vision intent~~** -- RESOLVED
+   - The codebase has NO image attachment mechanism. Ollama expects base64 in an `images` array on the message, but clod doesn't implement this. Use keyword-only detection for vision intent in Phase 2. See "Pattern 5" above.
 
 ## Validation Architecture
 
@@ -495,27 +592,37 @@ elif verb == "/intent":
 ## Sources
 
 ### Primary (HIGH confidence)
-- [sentence-transformers/all-MiniLM-L6-v2 HuggingFace](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) - model specs, file sizes, ONNX variants
+- [sentence-transformers/all-MiniLM-L6-v2 ONNX files](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/tree/main/onnx) - verified exact file names and sizes: model_quint8_avx2.onnx (23MB), model_qint8_avx512.onnx (23MB), model_qint8_avx512_vnni.onnx (23MB), model_qint8_arm64.onnx (23MB), model.onnx (90.4MB)
+- [onnxruntime issue #6004](https://github.com/microsoft/onnxruntime/issues/6004) - confirms signed INT8 produces incorrect results on AVX2-only CPUs; resolved by using UINT8 (reduce_range) or unsigned quantization
+- [onnxruntime quantization docs](https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html) - AVX2 recommendation: use U8U8 format; AVX512: use U8S8
 - [Sentence Transformers ONNX efficiency docs](https://sbert.net/docs/sentence_transformer/usage/efficiency.html) - ONNX backend, quantization, benchmarks
-- [sentence-transformers/all-MiniLM-L6-v2/tree/main/onnx](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/tree/main/onnx) - quantized model file sizes (23MB INT8)
-- [chroma-core/onnx-embedding](https://github.com/chroma-core/onnx-embedding) - reference implementation of ONNX + tokenizers approach
+- [Ollama vision docs](https://docs.ollama.com/capabilities/vision) - images sent as base64 in `images` array on message
+- [Ollama API docs](https://github.com/ollama/ollama/blob/main/docs/api.md) - chat API message format with images field
 
 ### Secondary (MEDIUM confidence)
 - [aurelio-labs/semantic-router](https://github.com/aurelio-labs/semantic-router) - route-based classification pattern (informed architecture, not used as dependency)
-- [aurelio-labs semantic-router quickstart](https://docs.aurelio.ai/semantic-router/get-started/quickstart) - route definition pattern with seed utterances
-- [PyInstaller + sentence-transformers issues](https://github.com/huggingface/sentence-transformers/issues/1890) - confirms PyTorch bloat problem (~1.8GB exe)
 - [HuggingFace tokenizers PyPI](https://pypi.org/project/tokenizers/) - package size (~3.4MB wheel)
+- Centroid vs nearest-neighbor for intent classification - multiple sources confirm centroid is adequate for well-separated classes with few-shot examples
 
 ### Tertiary (LOW confidence)
-- [FastEmbed by Qdrant](https://github.com/qdrant/fastembed) - alternative lightweight embedding library (not recommended but viable fallback)
-- CPU latency benchmarks (~20ms single sentence for MiniLM-L6-v2) - from multiple sources but no single authoritative benchmark
+- CPU latency benchmarks (~20ms single sentence for MiniLM-L6-v2) - from multiple sources but no single authoritative benchmark on this specific hardware
 
 ## Metadata
 
 **Confidence breakdown:**
-- Standard stack: HIGH - onnxruntime + tokenizers is the established pattern for PyTorch-free inference; ChromaDB uses identical approach
-- Architecture: HIGH - hybrid keyword+embedding is well-established for intent classification; cosine similarity routing is the core of semantic-router
-- Pitfalls: HIGH - PyInstaller + PyTorch bloat is extensively documented; ONNX mean pooling issues are well-known
+- Standard stack: HIGH - onnxruntime + tokenizers is the established pattern for PyTorch-free inference; ChromaDB uses identical approach; file names verified on HuggingFace
+- Architecture: HIGH - hybrid keyword+embedding is well-established for intent classification; centroid routing confirmed sufficient for well-separated classes
+- Pitfalls: HIGH - AVX2/VNNI saturation bug verified via official onnxruntime issue; PyInstaller + PyTorch bloat extensively documented; mean pooling issues well-known
+- Vision integration: HIGH - code investigation confirms no image handling exists; keyword-only approach is the correct Phase 2 scope
+
+**Changes from previous research:**
+1. CORRECTED model filename: `model_quint8_avx2.onnx` (UNSIGNED INT8), not `model_qint8_avx2.onnx` (does not exist)
+2. RESOLVED centroid vs all-utterances: centroid is sufficient, with fallback strategy documented
+3. RESOLVED vision intent: keyword-only detection, no image attachment support exists in codebase
+4. ADDED Pitfall 7: centroid re-normalization after averaging
+5. ADDED detailed model download instructions
+6. ADDED IntentEmbedder input detection (check `session.get_inputs()` for token_type_ids)
+7. ADDED REPL integration point with exact line numbers
 
 **Research date:** 2026-03-10
 **Valid until:** 2026-04-10 (stable domain, models rarely change)
