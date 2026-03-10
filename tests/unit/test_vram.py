@@ -22,10 +22,17 @@ class FakeConsole:
 
     def __init__(self):
         self.output = []
+        self.raw_output = []
         self._input_response = ""
 
     def print(self, *args, **kwargs):
-        self.output.append(str(args[0]) if args else "")
+        obj = args[0] if args else ""
+        self.raw_output.append(obj)
+        # For Panel objects, extract the renderable text
+        if hasattr(obj, "renderable"):
+            self.output.append(str(obj.renderable))
+        else:
+            self.output.append(str(obj))
 
     def input(self, *args, **kwargs):
         return self._input_response

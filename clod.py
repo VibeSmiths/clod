@@ -543,6 +543,216 @@ def recommend_model_for_vram(total_mb: int) -> Optional[str]:
     return None
 
 
+# ── VRAM Management ──────────────────────────────────────────────────────────
+
+
+def _get_loaded_models(cfg: dict) -> list[dict]:
+    """Query Ollama /api/ps for currently loaded models. Returns [] on error."""
+    try:
+        r = requests.get(f"{cfg["ollama_url"]}/api/ps", timeout=5)
+        if r.status_code == 200:
+            return r.json().get("models", [])
+        return []
+    except Exception:
+        return []
+
+
+def _unload_model(model_name: str, cfg: dict) -> bool:
+    """Unload a model from Ollama VRAM via keep_alive:0. Retries once on failure."""
+    for attempt in range(2):
+        try:
+            r = requests.post(
+                f"{cfg["ollama_url"]}/api/generate",
+                json={"model": model_name, "prompt": "", "keep_alive": 0},
+                timeout=30,
+            )
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
+        if attempt == 0:
+            time.sleep(3)
+    return False
+
+
+def _verify_vram_free(min_free_mb: int = 4000) -> bool:
+    """Return True if GPU has enough free VRAM. True when no GPU detected (graceful)."""
+    gpu = query_gpu_vram()
+    if gpu is None:
+        return True  # No GPU monitoring -- proceed optimistically
+    return gpu["free_mb"] >= min_free_mb
+
+
+def _vram_transition_panel(phase: str, console_obj) -> None:
+    """Print a Rich panel showing current VRAM usage with phase label. No-op if no GPU."""
+    gpu = query_gpu_vram()
+    if gpu is None:
+        console_obj.print("[dim]GPU monitoring unavailable -- skipping VRAM verification[/dim]")
+        return
+    used_mb = gpu["total_mb"] - gpu["free_mb"]
+    console_obj.print(
+        Panel(
+            f"VRAM: {used_mb}/{gpu["total_mb"]} MB used  "
+            f"({gpu["free_mb"]} MB free)  --  {gpu["name"]}",
+            title=f"[cyan]{phase}[/cyan]",
+            border_style="dim",
+            expand=False,
+        )
+    )
+
+
+def _ensure_model_ready(
+    target: str,
+    cfg: dict,
+    console_obj,
+    session_state: dict,
+    confirm: bool = True,
+) -> bool:
+    """
+    Ensure *target* model is loaded in Ollama. If a different model is loaded,
+    prompt the user for confirmation (when confirm=True), unload old models,
+    and load/pull the target. Returns False if user declines.
+    """
+    loaded = _get_loaded_models(cfg)
+    loaded_names = [m.get("name", "") for m in loaded]
+
+    # Already loaded -- nothing to do
+    if target in loaded_names:
+        return True
+
+    # Different model loaded -- ask user
+    if confirm and loaded_names:
+        ans = (
+            console_obj.input(f"[yellow]This needs [bold]{target}[/bold]. Switch? [y/N] [/yellow]")
+            .strip()
+            .lower()
+        )
+        if ans not in ("y", "yes"):
+            return False
+
+    # Unload all loaded models
+    for m in loaded:
+        name = m.get("name", "")
+        if name:
+            _vram_transition_panel("Unloading...", console_obj)
+            _unload_model(name, cfg)
+
+    # Poll VRAM free (up to 10s)
+    for _ in range(5):
+        if _verify_vram_free(2000):
+            break
+        time.sleep(2)
+
+    _vram_transition_panel("Loading...", console_obj)
+
+    # Ensure model is available (pull if needed) then warm up
+    ensure_ollama_model(target, cfg)
+    warmup_ollama_model(target, cfg)
+
+    _vram_transition_panel("Ready", console_obj)
+    session_state["model"] = target
+    return True
+
+
+def _prepare_for_gpu_service(
+    service_name: str,
+    cfg: dict,
+    console_obj,
+    session_state: dict,
+) -> bool:
+    """
+    Free GPU VRAM and start a GPU service (SD/ComfyUI).
+    Full handoff: unload models -> verify VRAM -> docker compose up -> poll health.
+    Saves previous model name for later restore.
+    """
+    loaded = _get_loaded_models(cfg)
+
+    # Save previous model for restore prompt
+    if loaded:
+        first_name = loaded[0].get("name", "")
+        if first_name:
+            session_state["_prev_model"] = first_name
+
+    console_obj.print(f"[yellow]Freeing GPU for {service_name}...[/yellow]")
+
+    # Unload all loaded models
+    for m in loaded:
+        name = m.get("name", "")
+        if name:
+            _unload_model(name, cfg)
+
+    # Poll VRAM free (up to 15s)
+    gpu = query_gpu_vram()
+    threshold = (gpu["total_mb"] - 2000) if gpu else 4000
+    freed = False
+    for _ in range(8):
+        if _verify_vram_free(threshold):
+            freed = True
+            break
+        time.sleep(2)
+
+    if freed:
+        _vram_transition_panel("GPU freed", console_obj)
+    else:
+        console_obj.print("[yellow]VRAM may not be fully freed. Proceeding anyway.[/yellow]")
+
+    # Start the target service via docker compose
+    try:
+        subprocess.run(
+            _compose_base(cfg) + ["up", "-d", service_name],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except Exception as e:
+        console_obj.print(f"[red]Failed to start {service_name}: {e}[/red]")
+        return True  # Proceed anyway -- service may already be running
+
+    # Poll health until ready (up to 90s)
+    deadline = time.time() + 90
+    with console_obj.status(f"[dim]Waiting for {service_name} to start...[/dim]"):
+        while time.time() < deadline:
+            health = _check_service_health(cfg)
+            if health.get(service_name, False):
+                console_obj.print(f"[green]{service_name} is ready.[/green]")
+                return True
+            time.sleep(2)
+
+    console_obj.print(f"[yellow]{service_name} may still be starting. Proceeding anyway.[/yellow]")
+    return True
+
+
+def _restore_after_gpu_service(
+    cfg: dict,
+    console_obj,
+    session_state: dict,
+) -> bool:
+    """
+    After GPU service completes, prompt user to reload previous Ollama model.
+    Returns True always (reload is optional).
+    """
+    prev_model = session_state.get("_prev_model")
+    if not prev_model:
+        return True
+
+    ans = (
+        console_obj.input(
+            f"[yellow]Generation complete. Reload [bold]{prev_model}[/bold]?" f" [y/N] [/yellow]"
+        )
+        .strip()
+        .lower()
+    )
+
+    if ans in ("y", "yes"):
+        warmup_ollama_model(prev_model, cfg)
+        _vram_transition_panel("Reloaded", console_obj)
+        session_state["model"] = prev_model
+
+    # Clear regardless of answer
+    session_state.pop("_prev_model", None)
+    return True
+
+
 def query_system_info() -> dict:
     """
     Return CPU and RAM info.
