@@ -12,8 +12,8 @@ This roadmap transforms clod from a manual-switching CLI into an intelligent rou
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [x] **Phase 1: VRAM Management & Offline Gating** - Safe model lifecycle and system-level feature gating (completed 2026-03-10)
-- [ ] **Phase 2: Intent Classification** - CPU-based user input classification via semantic-router
+- [x] **Phase 1: VRAM Management & Offline Gating** - Safe model lifecycle and system-level feature gating (completed 2026-03-10)
+- [ ] **Phase 2: Intent Classification** - CPU-based user input classification via ONNX embeddings + keyword rules
 - [ ] **Phase 3: Smart Model Routing** - Auto-select and switch models with user confirmation
 - [ ] **Phase 4: Media Generation Pipeline** - Natural language image/video generation with docker profile orchestration
 - [ ] **Phase 5: Face Swap** - ReActor-based face swap with slash commands and natural language triggers
@@ -34,21 +34,21 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 - [x] 01-01-PLAN.md — VRAM management functions (unload/verify/transition panel) + OLLAMA_MAX_LOADED_MODELS=1
 - [x] 01-02-PLAN.md — Offline gating enforcement, /search toggle, UI indicators
-- [ ] 01-03-PLAN.md — Gap closure: wire VRAM functions into /model, /gpu, and /sd handlers
+- [x] 01-03-PLAN.md — Wire VRAM functions into /model, /gpu, and /sd handlers
 
 ### Phase 2: Intent Classification
 **Goal**: User input is automatically classified by intent before any routing decision
 **Depends on**: Phase 1
 **Requirements**: INTENT-01, INTENT-02, INTENT-03
 **Success Criteria** (what must be TRUE):
-  1. Every user input is classified into one of 6 intents (chat, code, reason, vision, image-gen, video-gen) before reaching the inference layer
+  1. Every user input is classified into one of 7 intents (chat, code, reason, vision, image-gen, image-edit, video-gen) before reaching the inference layer
   2. Classification completes in under 100ms using CPU only (no GPU, no LLM call)
   3. User can bypass classification at any time by using `/model` to manually select a model
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
+- [ ] 02-01-PLAN.md — Intent classification module (keyword rules + ONNX embedder) with model files and unit tests
+- [ ] 02-02-PLAN.md — REPL integration, /intent slash command, /model override, PyInstaller spec update
 
 ### Phase 3: Smart Model Routing
 **Goal**: Clod automatically picks the right Ollama model for the detected intent and switches with user visibility
