@@ -29,3 +29,7 @@ pipelines/*/__init__.py
 pipelines/*/valves.json
 
 *.exe
+
+# Intent classification model files (large binaries)
+models/intent/*.onnx
+models/intent/.cache/
