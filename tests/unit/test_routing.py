@@ -181,3 +181,109 @@ def test_route_failure_graceful(mock_session_state, monkeypatch):
     result = clod._route_to_model("code", 0.95, mock_session_state, console)
     assert result is False
     assert mock_session_state["model"] == "llama3.1:8b"
+
+
+# ---------- Rich Progress bar during ollama_pull ----------
+
+import responses as resp_lib
+from unittest.mock import MagicMock, patch
+
+
+@resp_lib.activate
+def test_progress_bar_during_pull(fake_console):
+    """When ollama_pull streams NDJSON events with total/completed,
+    a Rich Progress bar is used (not ASCII bars)."""
+    body = (
+        b'{"status": "pulling manifest"}\n'
+        b'{"status": "downloading sha256:abc", "total": 8000000, "completed": 2000000}\n'
+        b'{"status": "downloading sha256:abc", "total": 8000000, "completed": 8000000}\n'
+        b'{"status": "verifying sha256 digest"}\n'
+        b'{"status": "success"}\n'
+    )
+    resp_lib.add(resp_lib.POST, "http://localhost:11434/api/pull", body=body)
+
+    with patch("clod.Progress") as MockProgress:
+        mock_progress_instance = MagicMock()
+        mock_task_id = 0
+        mock_progress_instance.add_task.return_value = mock_task_id
+        MockProgress.return_value.__enter__ = MagicMock(return_value=mock_progress_instance)
+        MockProgress.return_value.__exit__ = MagicMock(return_value=False)
+
+        clod.ollama_pull("test-model", "http://localhost:11434")
+
+        # Progress was instantiated as context manager
+        MockProgress.assert_called_once()
+        MockProgress.return_value.__enter__.assert_called_once()
+
+        # add_task was called
+        mock_progress_instance.add_task.assert_called_once()
+
+        # update was called with total/completed values
+        update_calls = mock_progress_instance.update.call_args_list
+        assert len(update_calls) >= 2, f"Expected >=2 update calls, got {len(update_calls)}"
+
+        # At least one call should have total= and completed= kwargs
+        has_download_update = any(
+            c.kwargs.get("total") and c.kwargs.get("completed") for c in update_calls
+        )
+        assert has_download_update, "Expected at least one update with total/completed"
+
+
+@resp_lib.activate
+def test_pull_non_download_phases(fake_console):
+    """When NDJSON events have status but no total/completed,
+    the progress description updates without crashing."""
+    body = (
+        b'{"status": "pulling manifest"}\n'
+        b'{"status": "verifying sha256 digest"}\n'
+        b'{"status": "writing manifest"}\n'
+        b'{"status": "success"}\n'
+    )
+    resp_lib.add(resp_lib.POST, "http://localhost:11434/api/pull", body=body)
+
+    with patch("clod.Progress") as MockProgress:
+        mock_progress_instance = MagicMock()
+        mock_task_id = 0
+        mock_progress_instance.add_task.return_value = mock_task_id
+        MockProgress.return_value.__enter__ = MagicMock(return_value=mock_progress_instance)
+        MockProgress.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Should not crash
+        clod.ollama_pull("test-model", "http://localhost:11434")
+
+        # update was called with description but without total
+        update_calls = mock_progress_instance.update.call_args_list
+        assert len(update_calls) >= 2
+
+        # All calls should have description=
+        for c in update_calls:
+            assert "description" in c.kwargs, f"Missing description in update call: {c}"
+
+
+# ---------- Spinner during warmup ----------
+
+
+@resp_lib.activate
+def test_spinner_during_warmup(fake_console, mock_cfg):
+    """warmup_ollama_model uses console.status (spinner) for VRAM loading."""
+    resp_lib.add(
+        resp_lib.POST,
+        "http://localhost:11434/api/chat",
+        json={"message": {"role": "assistant", "content": "hi"}},
+    )
+
+    status_called = []
+    original_status = fake_console.status
+
+    def tracking_status(*args, **kwargs):
+        status_called.append((args, kwargs))
+        return original_status(*args, **kwargs)
+
+    fake_console.status = tracking_status
+
+    clod.warmup_ollama_model("test-model", mock_cfg)
+
+    assert len(status_called) >= 1, "console.status should be called for spinner"
+    # Verify spinner kwarg
+    first_call_kwargs = status_called[0][1]
+    assert first_call_kwargs.get("spinner") == "dots", "Should use 'dots' spinner"
