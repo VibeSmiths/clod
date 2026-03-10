@@ -21,9 +21,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### VRAM Management
 
-- [ ] **VRAM-01**: Ollama is configured with OLLAMA_MAX_LOADED_MODELS=1 to prevent OOM on 16GB GPU
-- [ ] **VRAM-02**: Before loading a new model, clod explicitly unloads the current model using Ollama's keep_alive:0 API
-- [ ] **VRAM-03**: Before switching to SD/ComfyUI, clod unloads the active Ollama model to free GPU VRAM
+- [x] **VRAM-01**: Ollama is configured with OLLAMA_MAX_LOADED_MODELS=1 to prevent OOM on 16GB GPU
+- [x] **VRAM-02**: Before loading a new model, clod explicitly unloads the current model using Ollama's keep_alive:0 API
+- [x] **VRAM-03**: Before switching to SD/ComfyUI, clod unloads the active Ollama model to free GPU VRAM
 
 ### Image Generation
 
@@ -102,9 +102,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| VRAM-01 | Phase 1 | Pending |
-| VRAM-02 | Phase 1 | Pending |
-| VRAM-03 | Phase 1 | Pending |
+| VRAM-01 | Phase 1 | Complete |
+| VRAM-02 | Phase 1 | Complete |
+| VRAM-03 | Phase 1 | Complete |
 | OFFL-01 | Phase 1 | Complete |
 | OFFL-02 | Phase 1 | Complete |
 | OFFL-03 | Phase 1 | Complete |
