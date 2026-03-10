@@ -17,6 +17,27 @@ def fake_console(monkeypatch):
     """Monkeypatch clod.console with a no-op object."""
 
     class _FakeConsole:
+        """Wraps a real rich.console.Console writing to /dev/null so that
+        Rich components (Progress, Live, etc.) work, while keeping output
+        suppressed and easy to override in tests."""
+
+        def __init__(self):
+            import io
+            from rich.console import Console as _RC
+
+            self._real = _RC(file=io.StringIO(), force_terminal=True, width=80)
+
+        def __getattr__(self, name):
+            # Delegate anything not explicitly overridden to the real Console
+            return getattr(self._real, name)
+
+        # Dunder methods are not resolved via __getattr__, so delegate explicitly
+        def __enter__(self):
+            return self._real.__enter__()
+
+        def __exit__(self, *args):
+            return self._real.__exit__(*args)
+
         def print(self, *args, **kwargs):
             pass
 
