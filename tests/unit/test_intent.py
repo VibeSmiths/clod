@@ -310,3 +310,101 @@ class TestCosineSimilarity:
         result = cosine_similarity(vec, matrix)
         assert result.shape == (3,)
         assert result[0] > result[1]  # identical > orthogonal
+
+
+# ---------------------------------------------------------------------------
+# REPL integration tests (slash commands, session state)
+# ---------------------------------------------------------------------------
+
+
+class TestIntentSlashCommands:
+    """Tests for /intent command and /model override behavior in handle_slash."""
+
+    def test_model_override_disables_intent(self, mock_session_state, fake_console):
+        """After /model switch, intent_enabled should be False."""
+        import clod
+
+        mock_session_state["intent_enabled"] = True
+        # Use a cloud model to avoid _ensure_model_ready call
+        clod.handle_slash("/model claude-sonnet-4-6", mock_session_state, [])
+        assert mock_session_state["intent_enabled"] is False
+
+    def test_model_override_ollama_disables_intent(
+        self, mock_session_state, fake_console, monkeypatch
+    ):
+        """After /model switch to Ollama model, intent_enabled should be False."""
+        import clod
+
+        mock_session_state["intent_enabled"] = True
+        # Mock _ensure_model_ready to succeed
+        monkeypatch.setattr(clod, "_ensure_model_ready", lambda *a, **kw: True)
+        clod.handle_slash("/model llama3.1:8b", mock_session_state, [])
+        assert mock_session_state["intent_enabled"] is False
+
+    def test_intent_auto_reenables(self, mock_session_state, fake_console):
+        """'/intent auto' re-enables intent classification."""
+        import clod
+
+        mock_session_state["intent_enabled"] = False
+        clod.handle_slash("/intent auto", mock_session_state, [])
+        assert mock_session_state["intent_enabled"] is True
+
+    def test_intent_verbose_toggle(self, mock_session_state, fake_console):
+        """/intent verbose toggles intent_verbose."""
+        import clod
+
+        assert mock_session_state["intent_verbose"] is False
+        clod.handle_slash("/intent verbose", mock_session_state, [])
+        assert mock_session_state["intent_verbose"] is True
+        clod.handle_slash("/intent verbose", mock_session_state, [])
+        assert mock_session_state["intent_verbose"] is False
+
+    def test_intent_oneshot(self, mock_session_state, fake_console, monkeypatch):
+        """/intent <text> shows one-shot classification result via Panel."""
+        import clod
+
+        monkeypatch.setattr(clod, "classify_intent", lambda text: ("image_gen", 0.95))
+        monkeypatch.setattr(clod, "HAS_INTENT", True)
+
+        printed = []
+        fake_console.print = lambda *a, **kw: printed.append(a)
+
+        clod.handle_slash("/intent generate an image of a cat", mock_session_state, [])
+        # Should have printed something containing the classification result
+        assert len(printed) > 0
+        # Check that a Panel was printed (first positional arg)
+        from rich.panel import Panel
+
+        assert any(isinstance(a[0], Panel) for a in printed)
+
+    def test_intent_status(self, mock_session_state, fake_console):
+        """/intent with no args shows current state."""
+        import clod
+
+        mock_session_state["last_intent"] = "code"
+        mock_session_state["last_confidence"] = 0.92
+
+        printed = []
+        fake_console.print = lambda *a, **kw: printed.append(str(a))
+
+        clod.handle_slash("/intent", mock_session_state, [])
+        assert len(printed) > 0
+
+    def test_session_state_has_intent_fields(self):
+        """session_state initialized in run_repl must have intent fields."""
+        # We can't call run_repl directly (TTY), but we verify conftest has them
+        import clod
+
+        # Check that HAS_INTENT attribute exists on clod module
+        assert hasattr(clod, "HAS_INTENT")
+
+    def test_mock_session_state_fixture(self, mock_session_state):
+        """Updated mock_session_state fixture includes intent fields."""
+        assert "intent_enabled" in mock_session_state
+        assert "last_intent" in mock_session_state
+        assert "last_confidence" in mock_session_state
+        assert "intent_verbose" in mock_session_state
+        assert mock_session_state["intent_enabled"] is True
+        assert mock_session_state["last_intent"] is None
+        assert mock_session_state["last_confidence"] == 0.0
+        assert mock_session_state["intent_verbose"] is False

@@ -60,4 +60,8 @@ def mock_session_state(mock_cfg):
         "cfg": mock_cfg,
         "budget": clod.TokenBudget(10000),
         "offline": False,
+        "intent_enabled": True,
+        "last_intent": None,
+        "last_confidence": 0.0,
+        "intent_verbose": False,
     }
