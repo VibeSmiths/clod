@@ -12,7 +12,7 @@ This roadmap transforms clod from a manual-switching CLI into an intelligent rou
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: VRAM Management & Offline Gating** - Safe model lifecycle and system-level feature gating
+- [x] **Phase 1: VRAM Management & Offline Gating** - Safe model lifecycle and system-level feature gating (completed 2026-03-10)
 - [ ] **Phase 2: Intent Classification** - CPU-based user input classification via semantic-router
 - [ ] **Phase 3: Smart Model Routing** - Auto-select and switch models with user confirmation
 - [ ] **Phase 4: Media Generation Pipeline** - Natural language image/video generation with docker profile orchestration
@@ -104,7 +104,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. VRAM Management & Offline Gating | 2/3 | Gap closure | |
+| 1. VRAM Management & Offline Gating | 3/3 | Complete   | 2026-03-10 |
 | 2. Intent Classification | 0/2 | Not started | - |
 | 3. Smart Model Routing | 0/2 | Not started | - |
 | 4. Media Generation Pipeline | 0/3 | Not started | - |
