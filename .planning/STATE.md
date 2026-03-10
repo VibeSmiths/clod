@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-03-10T18:12:51.219Z"
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-03-10T19:31:41.913Z"
 last_activity: 2026-03-10 -- Completed 02-02 (REPL Integration)
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 7
+  completed_plans: 6
 ---
 
 ---
@@ -40,12 +40,12 @@ See: .planning/PROJECT.md (updated 2026-03-10)
 
 ## Current Position
 
-Phase: 2 of 6 (Intent Classification) -- COMPLETE
-Plan: 2 of 2 in current phase (all complete)
-Status: Phase 02 complete
-Last activity: 2026-03-10 -- Completed 02-02 (REPL Integration)
+Phase: 3 of 6 (Smart Model Routing) -- IN PROGRESS
+Plan: 1 of 2 in current phase (03-01 complete)
+Status: Executing Phase 03
+Last activity: 2026-03-10 -- Completed 03-01 (INTENT_MODEL_MAP + _route_to_model)
 
-Progress: [██████████] 100%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
@@ -66,6 +66,7 @@ Progress: [██████████] 100%
 - Trend: accelerating
 
 *Updated after each plan completion*
+| Phase 03 P01 | 9min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,8 @@ Recent decisions affecting current work:
 - 02-02: HAS_INTENT guard for graceful degradation if intent module unavailable
 - 02-02: Low confidence threshold at 0.8 prints dim notice; high confidence is silent
 - 02-02: /model switch disables auto-classification to respect user's explicit choice
+- [Phase 03]: Routing only fires when confidence >= 0.8; cloud models exempt from auto-routing
+- [Phase 03]: Non-model intents (image_gen/edit/video_gen) mapped to None for Phase 4 handling
 
 ### Roadmap Evolution
 
@@ -109,6 +112,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-10T18:02:00Z
-Stopped at: Completed 02-02-PLAN.md
-Resume file: .planning/phases/02-intent-classification/02-02-SUMMARY.md
+Last session: 2026-03-10T19:31:41.911Z
+Stopped at: Completed 03-01-PLAN.md
+Resume file: None

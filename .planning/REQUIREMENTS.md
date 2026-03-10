@@ -15,8 +15,8 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Model Routing
 
-- [ ] **ROUTE-01**: Clod automatically selects the appropriate Ollama model based on detected intent (chat→llama3.1:8b, code→qwen2.5-coder:14b, reason→deepseek-r1:14b, vision→qwen2.5vl:7b)
-- [ ] **ROUTE-02**: Before switching models, clod shows a confirmation message ("Switching to deepseek-r1:14b for reasoning...") that auto-proceeds unless user cancels
+- [x] **ROUTE-01**: Clod automatically selects the appropriate Ollama model based on detected intent (chat→llama3.1:8b, code→qwen2.5-coder:14b, reason→deepseek-r1:14b, vision→qwen2.5vl:7b)
+- [x] **ROUTE-02**: Before switching models, clod shows a confirmation message ("Switching to deepseek-r1:14b for reasoning...") that auto-proceeds unless user cancels
 - [ ] **ROUTE-03**: Loading dialog shows Rich spinner for quick swaps (model already loaded) and progress bar for first-time pulls
 
 ### VRAM Management
@@ -111,8 +111,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INTENT-01 | Phase 2 | Complete |
 | INTENT-02 | Phase 2 | Complete |
 | INTENT-03 | Phase 2 | Complete |
-| ROUTE-01 | Phase 3 | Pending |
-| ROUTE-02 | Phase 3 | Pending |
+| ROUTE-01 | Phase 3 | Complete |
+| ROUTE-02 | Phase 3 | Complete |
 | ROUTE-03 | Phase 3 | Pending |
 | IMG-01 | Phase 4 | Pending |
 | IMG-02 | Phase 4 | Pending |
