@@ -423,7 +423,9 @@ def test_infer_max_tool_rounds_returns_last_content(monkeypatch, fake_console, m
         return ("partial content", [tool_call])
 
     monkeypatch.setattr(clod, "stream_and_render", fake_stream_and_render)
-    monkeypatch.setattr(clod, "execute_tool", lambda name, args, console, cfg: "result")
+    monkeypatch.setattr(
+        clod, "execute_tool", lambda name, args, console, cfg, features=None: "result"
+    )
 
     result = clod.infer(
         [{"role": "user", "content": "run"}],
