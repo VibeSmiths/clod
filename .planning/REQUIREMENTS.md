@@ -102,39 +102,39 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INTENT-01 | — | Pending |
-| INTENT-02 | — | Pending |
-| INTENT-03 | — | Pending |
-| ROUTE-01 | — | Pending |
-| ROUTE-02 | — | Pending |
-| ROUTE-03 | — | Pending |
-| VRAM-01 | — | Pending |
-| VRAM-02 | — | Pending |
-| VRAM-03 | — | Pending |
-| IMG-01 | — | Pending |
-| IMG-02 | — | Pending |
-| IMG-03 | — | Pending |
-| IMG-04 | — | Pending |
-| VID-01 | — | Pending |
-| VID-02 | — | Pending |
-| VID-03 | — | Pending |
-| DOCK-01 | — | Pending |
-| DOCK-02 | — | Pending |
-| DOCK-03 | — | Pending |
-| FACE-01 | — | Pending |
-| FACE-02 | — | Pending |
-| FACE-03 | — | Pending |
-| FACE-04 | — | Pending |
-| FACE-05 | — | Pending |
-| OFFL-01 | — | Pending |
-| OFFL-02 | — | Pending |
-| OFFL-03 | — | Pending |
+| VRAM-01 | Phase 1 | Pending |
+| VRAM-02 | Phase 1 | Pending |
+| VRAM-03 | Phase 1 | Pending |
+| OFFL-01 | Phase 1 | Pending |
+| OFFL-02 | Phase 1 | Pending |
+| OFFL-03 | Phase 1 | Pending |
+| INTENT-01 | Phase 2 | Pending |
+| INTENT-02 | Phase 2 | Pending |
+| INTENT-03 | Phase 2 | Pending |
+| ROUTE-01 | Phase 3 | Pending |
+| ROUTE-02 | Phase 3 | Pending |
+| ROUTE-03 | Phase 3 | Pending |
+| IMG-01 | Phase 4 | Pending |
+| IMG-02 | Phase 4 | Pending |
+| IMG-03 | Phase 4 | Pending |
+| IMG-04 | Phase 4 | Pending |
+| VID-01 | Phase 4 | Pending |
+| VID-02 | Phase 4 | Pending |
+| VID-03 | Phase 4 | Pending |
+| DOCK-01 | Phase 4 | Pending |
+| DOCK-02 | Phase 4 | Pending |
+| DOCK-03 | Phase 4 | Pending |
+| FACE-01 | Phase 5 | Pending |
+| FACE-02 | Phase 5 | Pending |
+| FACE-03 | Phase 5 | Pending |
+| FACE-04 | Phase 5 | Pending |
+| FACE-05 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 27 total
-- Mapped to phases: 0
-- Unmapped: 27 ⚠️
+- Mapped to phases: 27
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-10*
-*Last updated: 2026-03-10 after initial definition*
+*Last updated: 2026-03-10 after roadmap creation*
