@@ -54,9 +54,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Offline Mode
 
-- [ ] **OFFL-01**: When in offline mode, all outbound HTTP requests are blocked (no cloud LLM calls, no web search, no external API calls)
-- [ ] **OFFL-02**: Offline mode is auto-detected from service health checks (LiteLLM down = no cloud) and can be manually toggled
-- [ ] **OFFL-03**: UI clearly indicates when offline mode is active so user knows cloud features are unavailable
+- [x] **OFFL-01**: When in offline mode, all outbound HTTP requests are blocked (no cloud LLM calls, no web search, no external API calls)
+- [x] **OFFL-02**: Offline mode is auto-detected from service health checks (LiteLLM down = no cloud) and can be manually toggled
+- [x] **OFFL-03**: UI clearly indicates when offline mode is active so user knows cloud features are unavailable
 
 ## v2 Requirements
 
@@ -105,9 +105,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VRAM-01 | Phase 1 | Pending |
 | VRAM-02 | Phase 1 | Pending |
 | VRAM-03 | Phase 1 | Pending |
-| OFFL-01 | Phase 1 | Pending |
-| OFFL-02 | Phase 1 | Pending |
-| OFFL-03 | Phase 1 | Pending |
+| OFFL-01 | Phase 1 | Complete |
+| OFFL-02 | Phase 1 | Complete |
+| OFFL-03 | Phase 1 | Complete |
 | INTENT-01 | Phase 2 | Pending |
 | INTENT-02 | Phase 2 | Pending |
 | INTENT-03 | Phase 2 | Pending |
