@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-03-10T17:53:00Z"
-last_activity: 2026-03-10 -- Completed 02-01 (Intent Classification Core)
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-03-10T18:02:00Z"
+last_activity: 2026-03-10 -- Completed 02-02 (REPL Integration)
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 5
-  completed_plans: 4
-  percent: 80
+  completed_plans: 5
+  percent: 100
 ---
 
 # Project State
@@ -21,33 +21,33 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-10)
 
 **Core value:** When the user says what they want, clod figures out how to do it -- right model, right service, right workflow -- without manual switching.
-**Current focus:** Phase 2, Plan 1 complete (intent classification core). Plan 2 next (REPL integration).
+**Current focus:** Phase 2 complete (intent classification). Phase 3 next (Smart Model Routing).
 
 ## Current Position
 
-Phase: 2 of 6 (Intent Classification)
-Plan: 1 of 2 in current phase
-Status: Plan 02-01 complete
-Last activity: 2026-03-10 -- Completed 02-01 (Intent Classification Core)
+Phase: 2 of 6 (Intent Classification) -- COMPLETE
+Plan: 2 of 2 in current phase (all complete)
+Status: Phase 02 complete
+Last activity: 2026-03-10 -- Completed 02-02 (REPL Integration)
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: ~10min
-- Total execution time: ~0.7 hours
+- Total plans completed: 5
+- Average duration: ~9min
+- Total execution time: ~0.8 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-vram-management-offline-gating | 3/3 | ~36min | ~12min |
-| 02-intent-classification | 1/2 | 4min | 4min |
+| 02-intent-classification | 2/2 | 11min | ~6min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (13min), 01-02 (~13min), 01-03 (10min), 02-01 (4min)
+- Last 5 plans: 01-02 (~13min), 01-03 (10min), 02-01 (4min), 02-02 (7min)
 - Trend: accelerating
 
 *Updated after each plan completion*
@@ -75,6 +75,10 @@ Recent decisions affecting current work:
 - 02-01: Graceful fallback on embedding failure returns ("chat", 0.0)
 - 02-01: ONNX model: model_quint8_avx2.onnx (UINT8, AVX2) avoids signed INT8 saturation bug
 - 02-01: Centroids re-normalized after averaging per research Pitfall 7
+- 02-02: Passive classification in Phase 2: classifies but doesn't switch models (Phase 3)
+- 02-02: HAS_INTENT guard for graceful degradation if intent module unavailable
+- 02-02: Low confidence threshold at 0.8 prints dim notice; high confidence is silent
+- 02-02: /model switch disables auto-classification to respect user's explicit choice
 
 ### Roadmap Evolution
 
@@ -90,6 +94,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-10T17:53:00Z
-Stopped at: Completed 02-01-PLAN.md
-Resume file: .planning/phases/02-intent-classification/02-01-SUMMARY.md
+Last session: 2026-03-10T18:02:00Z
+Stopped at: Completed 02-02-PLAN.md
+Resume file: .planning/phases/02-intent-classification/02-02-SUMMARY.md

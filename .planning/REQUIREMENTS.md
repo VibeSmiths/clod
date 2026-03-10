@@ -11,7 +11,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 - [x] **INTENT-01**: User input is classified into one of 6 intents (chat, code, reason, vision, image-gen, video-gen) before routing
 - [x] **INTENT-02**: Classification completes in under 100ms without GPU usage (CPU-only via semantic-router or equivalent)
-- [ ] **INTENT-03**: User can override classification by using `/model` to manually select a model
+- [x] **INTENT-03**: User can override classification by using `/model` to manually select a model
 
 ### Model Routing
 
@@ -110,7 +110,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OFFL-03 | Phase 1 | Complete |
 | INTENT-01 | Phase 2 | Complete |
 | INTENT-02 | Phase 2 | Complete |
-| INTENT-03 | Phase 2 | Pending |
+| INTENT-03 | Phase 2 | Complete |
 | ROUTE-01 | Phase 3 | Pending |
 | ROUTE-02 | Phase 3 | Pending |
 | ROUTE-03 | Phase 3 | Pending |
