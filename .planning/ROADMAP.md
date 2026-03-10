@@ -29,11 +29,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Before launching SD or ComfyUI, the active Ollama model is unloaded and VRAM is verified free
   3. When offline, no outbound HTTP requests are made to cloud LLMs, web search, or external APIs
   4. The UI shows a clear offline indicator when cloud features are unavailable
-**Plans**: 2 plans
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — VRAM management functions (unload/verify/transition panel) + OLLAMA_MAX_LOADED_MODELS=1
-- [ ] 01-02-PLAN.md — Offline gating enforcement, /search toggle, UI indicators
+- [x] 01-01-PLAN.md — VRAM management functions (unload/verify/transition panel) + OLLAMA_MAX_LOADED_MODELS=1
+- [x] 01-02-PLAN.md — Offline gating enforcement, /search toggle, UI indicators
+- [ ] 01-03-PLAN.md — Gap closure: wire VRAM functions into /model, /gpu, and /sd handlers
 
 ### Phase 2: Intent Classification
 **Goal**: User input is automatically classified by intent before any routing decision
@@ -103,7 +104,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. VRAM Management & Offline Gating | 1/2 | In Progress|  |
+| 1. VRAM Management & Offline Gating | 2/3 | Gap closure | |
 | 2. Intent Classification | 0/2 | Not started | - |
 | 3. Smart Model Routing | 0/2 | Not started | - |
 | 4. Media Generation Pipeline | 0/3 | Not started | - |
