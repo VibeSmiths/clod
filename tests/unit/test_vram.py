@@ -486,3 +486,267 @@ def test_env_config():
 
     match = re.search(r"OLLAMA_MAX_LOADED_MODELS.*?[=:].*?1", content)
     assert match is not None, "OLLAMA_MAX_LOADED_MODELS should default to 1"
+
+
+# ── handle_slash VRAM wiring ────────────────────────────────────────────────
+
+from clod import handle_slash, TokenBudget
+
+
+def _make_slash_state(cfg=None):
+    """Return a fresh session_state for handle_slash tests."""
+    if cfg is None:
+        cfg = _make_cfg()
+    return {
+        "model": "qwen2.5-coder:14b",
+        "pipeline": None,
+        "tools_on": False,
+        "system": None,
+        "cfg": cfg,
+        "budget": TokenBudget(10000),
+        "offline": False,
+    }
+
+
+# -- Test 1: /model calls _ensure_model_ready for non-cloud models --
+
+
+def test_model_calls_ensure_model_ready(monkeypatch):
+    """'/model deepseek-r1:14b' calls _ensure_model_ready, not warmup_ollama_model."""
+    ensure_calls = []
+
+    def fake_ensure(target, cfg, console_obj, session_state, confirm=True):
+        ensure_calls.append({"target": target, "confirm": confirm})
+        session_state["model"] = target
+        return True
+
+    monkeypatch.setattr(clod, "_ensure_model_ready", fake_ensure)
+    monkeypatch.setattr(clod, "console", FakeConsole())
+
+    state = _make_slash_state()
+    handle_slash("/model deepseek-r1:14b", state, [])
+
+    assert len(ensure_calls) == 1
+    assert ensure_calls[0]["target"] == "deepseek-r1:14b"
+    assert ensure_calls[0]["confirm"] is True
+
+
+# -- Test 2: /model sets session_state["model"] when _ensure_model_ready returns True --
+
+
+def test_model_sets_state_on_ensure_true(monkeypatch):
+    """'/model X' sets model and clears pipeline when _ensure_model_ready returns True."""
+
+    def fake_ensure(target, cfg, console_obj, session_state, confirm=True):
+        session_state["model"] = target
+        return True
+
+    monkeypatch.setattr(clod, "_ensure_model_ready", fake_ensure)
+    monkeypatch.setattr(clod, "console", FakeConsole())
+
+    state = _make_slash_state()
+    state["pipeline"] = "code_review"
+    handle_slash("/model deepseek-r1:14b", state, [])
+
+    assert state["model"] == "deepseek-r1:14b"
+    assert state["pipeline"] is None
+
+
+# -- Test 3: /model does NOT switch when _ensure_model_ready returns False --
+
+
+def test_model_no_switch_on_ensure_false(monkeypatch):
+    """'/model X' does not change model when _ensure_model_ready returns False."""
+
+    def fake_ensure(target, cfg, console_obj, session_state, confirm=True):
+        return False
+
+    monkeypatch.setattr(clod, "_ensure_model_ready", fake_ensure)
+    fc = FakeConsole()
+    monkeypatch.setattr(clod, "console", fc)
+
+    state = _make_slash_state()
+    state["pipeline"] = "code_review"
+    handle_slash("/model deepseek-r1:14b", state, [])
+
+    assert state["model"] == "qwen2.5-coder:14b"  # unchanged
+    assert state["pipeline"] == "code_review"  # unchanged
+    assert any("cancelled" in s.lower() for s in fc.output)
+
+
+# -- Test 4: /gpu use calls _ensure_model_ready with confirm=False --
+
+
+def test_gpu_use_calls_ensure_model_ready(monkeypatch):
+    """/gpu use calls _ensure_model_ready with confirm=False."""
+    ensure_calls = []
+
+    def fake_ensure(target, cfg, console_obj, session_state, confirm=True):
+        ensure_calls.append({"target": target, "confirm": confirm})
+        session_state["model"] = target
+        return True
+
+    monkeypatch.setattr(clod, "_ensure_model_ready", fake_ensure)
+    monkeypatch.setattr(
+        clod,
+        "query_gpu_vram",
+        lambda: {"name": "RTX 4070 Ti", "total_mb": 16384, "free_mb": 10000},
+    )
+    monkeypatch.setattr(clod, "recommend_model_for_vram", lambda mb: "qwen2.5-coder:14b")
+    monkeypatch.setattr(clod, "console", FakeConsole())
+
+    state = _make_slash_state()
+    handle_slash("/gpu use", state, [])
+
+    assert len(ensure_calls) == 1
+    assert ensure_calls[0]["confirm"] is False
+
+
+# -- Test 5: /sd image|video unloads models before sd_switch_mode --
+
+
+def test_sd_video_unloads_before_switch(monkeypatch):
+    """/sd video unloads loaded models before calling sd_switch_mode."""
+    call_order = []
+
+    def fake_get_loaded(cfg):
+        call_order.append("get_loaded")
+        return [{"name": "qwen2.5-coder:14b"}]
+
+    def fake_unload(name, cfg):
+        call_order.append(f"unload:{name}")
+        return True
+
+    def fake_switch(mode, cfg):
+        call_order.append("sd_switch_mode")
+        return (True, "ok")
+
+    monkeypatch.setattr(clod, "_get_loaded_models", fake_get_loaded)
+    monkeypatch.setattr(clod, "_unload_model", fake_unload)
+    monkeypatch.setattr(clod, "_vram_transition_panel", lambda phase, c: call_order.append("panel"))
+    monkeypatch.setattr(clod, "_verify_vram_free", lambda min_free_mb=4000: True)
+    monkeypatch.setattr(clod, "sd_switch_mode", fake_switch)
+    monkeypatch.setattr(clod, "query_gpu_vram", lambda: None)
+    monkeypatch.setattr(clod, "recommend_model_for_vram", lambda mb: None)
+    monkeypatch.setattr(clod, "console", FakeConsole())
+
+    state = _make_slash_state()
+    state["sd_mode"] = "image"
+    handle_slash("/sd video", state, [])
+
+    # Unload must happen before sd_switch_mode
+    assert "get_loaded" in call_order
+    assert "unload:qwen2.5-coder:14b" in call_order
+    sd_idx = call_order.index("sd_switch_mode")
+    unload_idx = call_order.index("unload:qwen2.5-coder:14b")
+    assert unload_idx < sd_idx
+
+
+# -- Test 6: /sd image|video calls _verify_vram_free after unload, before switch --
+
+
+def test_sd_image_verifies_vram_after_unload(monkeypatch):
+    """/sd image calls _verify_vram_free after unloading and before sd_switch_mode."""
+    call_order = []
+
+    def fake_get_loaded(cfg):
+        call_order.append("get_loaded")
+        return [{"name": "llama3.1:8b"}]
+
+    def fake_unload(name, cfg):
+        call_order.append("unload")
+        return True
+
+    def fake_verify(min_free_mb=4000):
+        call_order.append("verify_vram")
+        return True
+
+    def fake_switch(mode, cfg):
+        call_order.append("sd_switch_mode")
+        return (True, "ok")
+
+    monkeypatch.setattr(clod, "_get_loaded_models", fake_get_loaded)
+    monkeypatch.setattr(clod, "_unload_model", fake_unload)
+    monkeypatch.setattr(clod, "_vram_transition_panel", lambda phase, c: None)
+    monkeypatch.setattr(clod, "_verify_vram_free", fake_verify)
+    monkeypatch.setattr(clod, "sd_switch_mode", fake_switch)
+    monkeypatch.setattr(clod, "query_gpu_vram", lambda: None)
+    monkeypatch.setattr(clod, "recommend_model_for_vram", lambda mb: None)
+    monkeypatch.setattr(clod, "console", FakeConsole())
+
+    state = _make_slash_state()
+    state["sd_mode"] = "video"
+    handle_slash("/sd image", state, [])
+
+    # verify_vram must be after unload and before sd_switch_mode
+    assert "verify_vram" in call_order
+    verify_idx = call_order.index("verify_vram")
+    unload_idx = call_order.index("unload")
+    sd_idx = call_order.index("sd_switch_mode")
+    assert unload_idx < verify_idx < sd_idx
+
+
+# -- Test 7: /sd start unloads and verifies VRAM before sd_switch_mode --
+
+
+def test_sd_start_unloads_and_verifies(monkeypatch):
+    """/sd start unloads models and verifies VRAM before sd_switch_mode."""
+    call_order = []
+
+    def fake_get_loaded(cfg):
+        call_order.append("get_loaded")
+        return [{"name": "qwen2.5-coder:14b"}]
+
+    def fake_unload(name, cfg):
+        call_order.append("unload")
+        return True
+
+    def fake_verify(min_free_mb=4000):
+        call_order.append("verify_vram")
+        return True
+
+    def fake_switch(mode, cfg):
+        call_order.append("sd_switch_mode")
+        return (True, "ok")
+
+    monkeypatch.setattr(clod, "_get_loaded_models", fake_get_loaded)
+    monkeypatch.setattr(clod, "_unload_model", fake_unload)
+    monkeypatch.setattr(clod, "_vram_transition_panel", lambda phase, c: None)
+    monkeypatch.setattr(clod, "_verify_vram_free", fake_verify)
+    monkeypatch.setattr(clod, "sd_switch_mode", fake_switch)
+    monkeypatch.setattr(clod, "console", FakeConsole())
+
+    state = _make_slash_state()
+    state["sd_mode"] = "image"
+    handle_slash("/sd start", state, [])
+
+    assert "get_loaded" in call_order
+    assert "verify_vram" in call_order
+    assert "sd_switch_mode" in call_order
+    verify_idx = call_order.index("verify_vram")
+    sd_idx = call_order.index("sd_switch_mode")
+    assert verify_idx < sd_idx
+
+
+# -- Test 8: /sd stop calls _restore_after_gpu_service --
+
+
+def test_sd_stop_calls_restore(monkeypatch):
+    """/sd stop calls _restore_after_gpu_service after stopping services."""
+    restore_calls = []
+
+    def fake_restore(cfg, console_obj, session_state):
+        restore_calls.append(True)
+        return True
+
+    monkeypatch.setattr(clod, "query_comfyui_running", lambda: True)
+    monkeypatch.setattr(clod, "query_video_running", lambda: False)
+    monkeypatch.setattr(clod, "comfyui_docker_action", lambda action: (True, "ok"))
+    monkeypatch.setattr(clod, "query_gpu_vram", lambda: None)
+    monkeypatch.setattr(clod, "_restore_after_gpu_service", fake_restore)
+    monkeypatch.setattr(clod, "console", FakeConsole())
+
+    state = _make_slash_state()
+    handle_slash("/sd stop", state, [])
+
+    assert len(restore_calls) == 1
