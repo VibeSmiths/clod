@@ -74,12 +74,12 @@ Plans:
   3. If the needed docker profile is not running, clod detects this, warns the user, and offers to switch profiles with GPU release verification
   4. Default negative prompts are automatically appended based on the active SD model type
   5. If AUTOMATIC1111 or ComfyUI is not running, clod offers to start the appropriate docker profile
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
-- [ ] 04-03: TBD
+- [ ] 04-01-PLAN.md — Core image generation functions (prompt crafting, SD model detection, negative prompts, A1111 txt2img with progress)
+- [ ] 04-02-PLAN.md — Video generation (ComfyUI API, workflow construction) + docker profile orchestration (auto-detect, confirm, switch)
+- [ ] 04-03-PLAN.md — REPL wiring (_handle_generation_intent orchestrator, /generate slash command, intent interception)
 
 ### Phase 5: Face Swap
 **Goal**: Users can perform face swaps via slash commands or natural language, powered by ReActor running locally
