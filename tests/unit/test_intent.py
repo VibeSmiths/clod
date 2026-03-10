@@ -248,7 +248,7 @@ class TestEmbeddingClassification:
         self, mock_onnx_session, mock_tokenizer, mock_route_embeddings
     ):
         """When embedding similarity is low, confidence reflects actual score."""
-        from intent import classify_intent, INTENTS
+        from intent import classify_intent, INTENTS, IntentEmbedder
         import intent as intent_mod
 
         embedder = IntentEmbedder.__new__(IntentEmbedder)
@@ -268,8 +268,6 @@ class TestEmbeddingClassification:
             assert intent_name in INTENTS
             # With mock data, confidence will be whatever cosine sim produces
             assert isinstance(conf, float)
-
-        from intent import IntentEmbedder  # re-import for reference
 
 
 # ---------------------------------------------------------------------------
