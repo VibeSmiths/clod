@@ -50,6 +50,14 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.progress import (
+    Progress,
+    BarColumn,
+    TextColumn,
+    DownloadColumn,
+    TransferSpeedColumn,
+    TimeRemainingColumn,
+)
 
 __version__ = "1.0.0"
 
@@ -464,29 +472,32 @@ def ollama_pull(model: str, ollama_url: str) -> None:
         console.print(f"[red]Ollama pull error: {e}[/red]")
         return
 
-    last_status = ""
-    for raw in resp.iter_lines():
-        if not raw:
-            continue
-        try:
-            event = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-
-        status = event.get("status", "")
-        total = event.get("total", 0)
-        completed = event.get("completed", 0)
-
-        if status != last_status:
-            last_status = status
-            if total and completed:
-                pct = int(completed / total * 100)
-                bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-                console.print(f"  [cyan][{bar}][/cyan] {pct:3d}%  {status}", end="\r")
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Pulling {model}", total=None)
+        for raw in resp.iter_lines():
+            if not raw:
+                continue
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            status = event.get("status", "")
+            total = event.get("total", 0)
+            completed = event.get("completed", 0)
+            if total:
+                progress.update(task, total=total, completed=completed, description=status)
             else:
-                console.print(f"  [dim]{status}[/dim]")
+                progress.update(task, description=status)
 
-    console.print(f"\n[green]done[/green] [bold]{model}[/bold] ready")
+    console.print(f"[green]done[/green] [bold]{model}[/bold] ready")
 
 
 def ensure_ollama_model(model: str, cfg: dict) -> bool:
@@ -3049,7 +3060,7 @@ def run_repl(
 
         messages.append({"role": "user", "content": user_input})
 
-        # -- Intent Classification (Phase 2) ---
+        # -- Intent Classification + Smart Model Routing ---
         if HAS_INTENT and session_state["intent_enabled"]:
             intent, confidence = classify_intent(user_input)
             session_state["last_intent"] = intent
@@ -3061,8 +3072,9 @@ def run_repl(
                     f"[dim]Low confidence intent: [bold]{intent}[/bold] ({confidence:.2f})"
                     " -- proceeding as chat[/dim]"
                 )
-            # Note: actual model switching happens in Phase 3 (Smart Model Routing)
-            # For now, classification is passive -- it classifies but doesn't switch models
+            else:
+                # Smart Model Routing (Phase 3)
+                _route_to_model(intent, confidence, session_state, console)
 
         reply = infer(
             messages,
