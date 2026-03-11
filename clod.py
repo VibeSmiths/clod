@@ -1245,6 +1245,73 @@ def _silent_restore_model(cfg: dict, console_obj, session_state: dict) -> None:
     session_state.pop("_prev_model", None)
 
 
+def _handle_generation_intent(
+    intent: str,
+    user_input: str,
+    session_state: dict,
+    console_obj,
+    cfg: dict,
+) -> None:
+    """Orchestrate the full generation lifecycle.
+
+    Sequence: save model -> load llama3.1:8b -> craft prompt -> unload ->
+    start service -> generate -> auto-open -> restore model.
+    """
+    # a. Save current model
+    prev_model = session_state.get("model", "")
+    session_state["_prev_model"] = prev_model
+
+    try:
+        # b. Load llama3.1:8b for prompt crafting
+        _ensure_model_ready("llama3.1:8b", cfg, console_obj, session_state, confirm=False)
+
+        # c. Craft prompt
+        prompt = user_input
+        exclusions = ""
+        try:
+            if intent == "image_gen":
+                prompt, exclusions = _craft_sd_prompt(user_input, cfg)
+            else:
+                prompt = _craft_video_prompt(user_input, cfg)
+        except Exception:
+            # Graceful fallback to raw user input
+            prompt = user_input
+            exclusions = ""
+
+        # d. Show crafted prompt
+        console_obj.print(f"[cyan]Prompt: {prompt}[/cyan]")
+
+        # e. Unload llama3.1:8b
+        _unload_model("llama3.1:8b", cfg)
+
+        # f. Ensure generation service is running
+        ok = _ensure_generation_service(intent, cfg, console_obj, session_state)
+        if not ok:
+            console_obj.print("[yellow]Generation service not available. Aborting.[/yellow]")
+            return
+
+        # g. Generate
+        filepath = None
+        if intent == "image_gen":
+            model_type = _detect_sd_model_type()
+            negative = _get_negative_prompts(model_type, exclusions)
+            params = SDXL_DEFAULT_PARAMS if model_type == "sdxl" else SD_DEFAULT_PARAMS
+            filepath = _generate_image(prompt, negative, params, cfg, console_obj)
+        else:
+            filepath = _generate_video(prompt, cfg, console_obj)
+
+        # h/i. Handle result
+        if filepath:
+            console_obj.print(f"[green]Saved: {filepath}[/green]")
+            if hasattr(os, "startfile"):
+                os.startfile(filepath)
+        else:
+            console_obj.print("[red]Generation failed. No output produced.[/red]")
+    finally:
+        # j. Always restore model
+        _silent_restore_model(cfg, console_obj, session_state)
+
+
 def query_system_info() -> dict:
     """
     Return CPU and RAM info.
@@ -2652,6 +2719,7 @@ def print_help() -> None:
                     "  [yellow]/index [/yellow][dim][path][/dim]           index projects: generate CLAUDE.md + README",
                     "  [yellow]/gpu[/yellow]                     show GPU VRAM + optimal model recommendation",
                     "  [yellow]/mcp[/yellow]                     show MCP filesystem server status and endpoints",
+                    "  [yellow]/generate [/yellow][dim][image|video] <prompt>[/dim]  generate image or video from description",
                     "  [yellow]/sd [/yellow][dim][image|video|stop|start][/dim]  switch image/video mode or stop/start SD",
                     "  [yellow]/services[/yellow]               show docker service health status",
                     "  [yellow]/intent[/yellow]                  show current intent classification state",
@@ -3382,6 +3450,20 @@ def handle_slash(
                 )
             )
 
+    elif verb == "/generate":
+        gen_parts = cmd.split(None, 2)
+        if len(gen_parts) < 3:
+            console.print("[yellow]Usage: /generate image|video <prompt>[/yellow]")
+        elif gen_parts[1].lower() not in ("image", "video"):
+            console.print("[red]Unknown type. Use 'image' or 'video'.[/red]")
+        else:
+            gen_type = gen_parts[1].lower()
+            prompt_text = gen_parts[2]
+            gen_intent = "image_gen" if gen_type == "image" else "video_gen"
+            _handle_generation_intent(
+                gen_intent, prompt_text, session_state, console, session_state["cfg"]
+            )
+
     else:
         return False
 
@@ -3503,6 +3585,11 @@ def run_repl(
                     " -- proceeding as chat[/dim]"
                 )
             else:
+                # Generation intent interception (Phase 4)
+                target = INTENT_MODEL_MAP.get(intent)
+                if target is None and intent in ("image_gen", "video_gen"):
+                    _handle_generation_intent(intent, user_input, session_state, console, cfg)
+                    continue  # skip normal infer() flow
                 # Smart Model Routing (Phase 3)
                 _route_to_model(intent, confidence, session_state, console)
 
