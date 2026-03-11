@@ -87,7 +87,8 @@ jobs:
           pytest tests/unit/ -v --tb=short \
             --cov=clod \
             --cov-report=xml \
-            --cov-report=term-missing
+            --cov-report=term-missing \
+            --cov-fail-under=90
 
       - name: Post coverage comment (PR only)
         if: github.event_name == 'pull_request'
