@@ -392,11 +392,11 @@ def test_prepare_for_gpu_service_starts_service(monkeypatch):
 
     health_calls = []
 
-    def fake_health(cfg):
-        health_calls.append(1)
-        return {"stable-diffusion": True}
+    def fake_gpu_health(service_name):
+        health_calls.append(service_name)
+        return True
 
-    monkeypatch.setattr(clod, "_check_service_health", fake_health)
+    monkeypatch.setattr(clod, "_check_gpu_service_health", fake_gpu_health)
 
     resp_lib.add(
         resp_lib.GET,
@@ -417,7 +417,7 @@ def test_prepare_for_gpu_service_starts_service(monkeypatch):
     assert result is True
     # Docker compose should have been called
     assert len(docker_calls) >= 1
-    # Health should have been polled
+    # GPU service health should have been polled
     assert len(health_calls) >= 1
 
 

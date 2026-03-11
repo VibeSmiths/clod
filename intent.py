@@ -175,6 +175,20 @@ _route_centroids: Optional[np.ndarray] = None
 _route_intent_names: Optional[list[str]] = None
 
 
+def _resolve_model_dir() -> pathlib.Path:
+    """Find the intent model directory, checking PyInstaller bundle first.
+
+    PyInstaller extracts data files to sys._MEIPASS (a temp dir), not to
+    the exe's parent directory.  Check _MEIPASS first so bundled model
+    files are found without duplicating them beside the exe.
+    """
+    if getattr(sys, "frozen", False):
+        meipass = pathlib.Path(sys._MEIPASS) / "models" / "intent"
+        if meipass.exists():
+            return meipass
+    return _get_clod_root() / "models" / "intent"
+
+
 def _ensure_embedder() -> None:
     """Initialize the embedder and load route centroids on first call."""
     global _embedder, _route_centroids, _route_intent_names
@@ -182,8 +196,7 @@ def _ensure_embedder() -> None:
     if _embedder is not None:
         return
 
-    root = _get_clod_root()
-    model_dir = root / "models" / "intent"
+    model_dir = _resolve_model_dir()
 
     model_path = str(model_dir / "model_quint8_avx2.onnx")
     tokenizer_path = str(model_dir / "tokenizer.json")

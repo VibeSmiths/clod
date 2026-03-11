@@ -771,6 +771,15 @@ def _route_to_model(
     return ok
 
 
+def _check_gpu_service_health(service_name: str) -> bool:
+    """Check if a GPU service (SD/ComfyUI) is reachable."""
+    if service_name == "stable-diffusion":
+        return query_comfyui_running()
+    if service_name == "comfyui":
+        return query_video_running()
+    return False
+
+
 def _prepare_for_gpu_service(
     service_name: str,
     cfg: dict,
@@ -781,6 +790,7 @@ def _prepare_for_gpu_service(
     Free GPU VRAM and start a GPU service (SD/ComfyUI).
     Full handoff: unload models -> verify VRAM -> docker compose up -> poll health.
     Saves previous model name for later restore.
+    Only unloads LLM models if VRAM usage exceeds 30%.
     """
     loaded = _get_loaded_models(cfg)
 
@@ -790,50 +800,62 @@ def _prepare_for_gpu_service(
         if first_name:
             session_state["_prev_model"] = first_name
 
-    console_obj.print(f"[yellow]Freeing GPU for {service_name}...[/yellow]")
-
-    # Unload all loaded models
-    for m in loaded:
-        name = m.get("name", "")
-        if name:
-            _unload_model(name, cfg)
-
-    # Poll VRAM free (up to 15s)
+    # Only unload LLM models if VRAM usage is above 30%
     gpu = query_gpu_vram()
-    threshold = (gpu["total_mb"] - 2000) if gpu else 4000
-    freed = False
-    for _ in range(8):
-        if _verify_vram_free(threshold):
-            freed = True
-            break
-        time.sleep(2)
+    if gpu:
+        used_pct = (gpu["total_mb"] - gpu["free_mb"]) / gpu["total_mb"] * 100
+        if used_pct > 30:
+            console_obj.print(
+                f"[yellow]VRAM {used_pct:.0f}% used — freeing GPU for {service_name}...[/yellow]"
+            )
+            for m in loaded:
+                name = m.get("name", "")
+                if name:
+                    _unload_model(name, cfg)
 
-    if freed:
-        _vram_transition_panel("GPU freed", console_obj)
+            # Poll VRAM free (up to 15s)
+            threshold = gpu["total_mb"] - 2000
+            for _ in range(8):
+                if _verify_vram_free(threshold):
+                    break
+                time.sleep(2)
+            _vram_transition_panel("GPU freed", console_obj)
+        else:
+            console_obj.print(f"[dim]VRAM {used_pct:.0f}% used — keeping LLM loaded.[/dim]")
     else:
-        console_obj.print("[yellow]VRAM may not be fully freed. Proceeding anyway.[/yellow]")
+        # No GPU monitoring -- unload anyway to be safe
+        console_obj.print(f"[yellow]Freeing GPU for {service_name}...[/yellow]")
+        for m in loaded:
+            name = m.get("name", "")
+            if name:
+                _unload_model(name, cfg)
 
     # Start the target service via docker compose
     try:
+        console_obj.print(
+            f"[dim]Starting {service_name} (may take a few minutes on first run)...[/dim]"
+        )
         subprocess.run(
             _compose_base(cfg) + ["up", "-d", service_name],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
+    except KeyboardInterrupt:
+        console_obj.print(f"\n[yellow]{service_name} startup cancelled.[/yellow]")
+        return False
     except Exception as e:
         console_obj.print(f"[red]Failed to start {service_name}: {e}[/red]")
         return True  # Proceed anyway -- service may already be running
 
-    # Poll health until ready (up to 90s)
-    deadline = time.time() + 90
+    # Poll health until ready (up to 180s — SD can take 90-120s on first run)
+    deadline = time.time() + 180
     with console_obj.status(f"[dim]Waiting for {service_name} to start...[/dim]"):
         while time.time() < deadline:
-            health = _check_service_health(cfg)
-            if health.get(service_name, False):
+            if _check_gpu_service_health(service_name):
                 console_obj.print(f"[green]{service_name} is ready.[/green]")
                 return True
-            time.sleep(2)
+            time.sleep(3)
 
     console_obj.print(f"[yellow]{service_name} may still be starting. Proceeding anyway.[/yellow]")
     return True
