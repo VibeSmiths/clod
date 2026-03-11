@@ -954,7 +954,7 @@ def _save_generation_output(data: bytes, ext: str, output_dir: str) -> str:
     """
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    short_hash = hashlib.md5(data[:256]).hexdigest()[:4]
+    short_hash = hashlib.md5(data[:256], usedforsecurity=False).hexdigest()[:4]
     filename = f"clod_{ts}_{short_hash}.{ext}"
     filepath = os.path.join(output_dir, filename)
     with open(filepath, "wb") as f:
