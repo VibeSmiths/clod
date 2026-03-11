@@ -3,14 +3,29 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-03-11T00:11:52.639Z"
+last_activity: 2026-03-10 -- Completed 04-01 (Core Image Generation Pipeline)
+progress:
+  total_phases: 6
+  completed_phases: 3
+  total_plans: 10
+  completed_plans: 8
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: executing
 stopped_at: Phase 4 context gathered
-last_updated: "2026-03-10T20:47:53.931Z"
+last_updated: "2026-03-11T00:11:33.601Z"
 last_activity: 2026-03-10 -- Completed 03-02 (Rich Progress Bar)
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 10
+  completed_plans: 8
 ---
 
 ---
@@ -40,12 +55,12 @@ See: .planning/PROJECT.md (updated 2026-03-10)
 
 ## Current Position
 
-Phase: 3 of 6 (Smart Model Routing) -- COMPLETE
-Plan: 2 of 2 in current phase (all complete)
-Status: Phase 03 complete
-Last activity: 2026-03-10 -- Completed 03-02 (Rich Progress Bar)
+Phase: 4 of 6 (Media Generation Pipeline)
+Plan: 1 of 3 in current phase (1 complete)
+Status: Executing Phase 04
+Last activity: 2026-03-10 -- Completed 04-01 (Core Image Generation Pipeline)
 
-Progress: [██████████] 100%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
@@ -67,6 +82,7 @@ Progress: [██████████] 100%
 - Trend: stable
 
 *Updated after each plan completion*
+| Phase 04 P01 | 13min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -98,6 +114,8 @@ Recent decisions affecting current work:
 - [Phase 03]: Routing only fires when confidence >= 0.8; cloud models exempt from auto-routing
 - [Phase 03]: Non-model intents (image_gen/edit/video_gen) mapped to None for Phase 4 handling
 - 03-02: FakeConsole wraps real rich.console.Console for full Progress/Live compatibility in tests
+- [Phase 04]: Single-shot prompt crafting with graceful fallback to raw user input on error
+- [Phase 04]: txt2img in background thread with 1.5s progress polling and skip_current_image=true
 
 ### Roadmap Evolution
 
@@ -113,6 +131,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-10T20:47:53.929Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-media-generation-pipeline/04-CONTEXT.md
+Last session: 2026-03-11T00:11:52.637Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: None

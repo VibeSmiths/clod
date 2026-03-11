@@ -27,10 +27,10 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Image Generation
 
-- [ ] **IMG-01**: User can trigger image generation via natural language ("generate a picture of...", "create an image of...")
-- [ ] **IMG-02**: Chat model (llama3.1:8b) crafts an SD-optimized prompt from the user's natural language description
-- [ ] **IMG-03**: Default negative prompts are auto-appended based on the loaded SD model type (SD1.5 vs SDXL)
-- [ ] **IMG-04**: If AUTOMATIC1111 is not running, clod offers to start the image docker profile
+- [x] **IMG-01**: User can trigger image generation via natural language ("generate a picture of...", "create an image of...")
+- [x] **IMG-02**: Chat model (llama3.1:8b) crafts an SD-optimized prompt from the user's natural language description
+- [x] **IMG-03**: Default negative prompts are auto-appended based on the loaded SD model type (SD1.5 vs SDXL)
+- [x] **IMG-04**: If AUTOMATIC1111 is not running, clod offers to start the image docker profile
 
 ### Video Generation
 
@@ -114,10 +114,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ROUTE-01 | Phase 3 | Complete |
 | ROUTE-02 | Phase 3 | Complete |
 | ROUTE-03 | Phase 3 | Complete |
-| IMG-01 | Phase 4 | Pending |
-| IMG-02 | Phase 4 | Pending |
-| IMG-03 | Phase 4 | Pending |
-| IMG-04 | Phase 4 | Pending |
+| IMG-01 | Phase 4 | Complete |
+| IMG-02 | Phase 4 | Complete |
+| IMG-03 | Phase 4 | Complete |
+| IMG-04 | Phase 4 | Complete |
 | VID-01 | Phase 4 | Pending |
 | VID-02 | Phase 4 | Pending |
 | VID-03 | Phase 4 | Pending |
