@@ -1044,6 +1044,207 @@ def _generate_image(
     return _save_generation_output(img_data, "png", output_dir)
 
 
+# ── Video Generation & Docker Orchestration ──────────────────────────────────
+
+
+def _craft_video_prompt(user_request: str, cfg: dict) -> str:
+    """Craft a ComfyUI-optimized video prompt from user's natural language.
+
+    Uses llama3.1:8b with :data:`VIDEO_PROMPT_SYSTEM`. Returns the optimized
+    prompt string, or falls back to the original *user_request* on error.
+    """
+    try:
+        messages = [
+            {"role": "system", "content": VIDEO_PROMPT_SYSTEM},
+            {"role": "user", "content": user_request},
+        ]
+        r = requests.post(
+            f"{cfg['ollama_url']}/api/chat",
+            json={"model": "llama3.1:8b", "messages": messages, "stream": False},
+            timeout=60,
+        )
+        r.raise_for_status()
+        return r.json()["message"]["content"].strip()
+    except Exception:
+        return user_request
+
+
+def _build_video_workflow(prompt: str) -> dict:
+    """Construct a basic ComfyUI workflow JSON for text-to-video.
+
+    Returns a parameterized workflow dict with *prompt* injected into the
+    positive prompt node. NOTE: The workflow should be customized per installed
+    video model (e.g., CogVideoX, LTX-Video, AnimateDiff).
+    """
+    return {
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "seed": 42,
+                "steps": 20,
+                "cfg": 7.0,
+                "sampler_name": "euler",
+                "scheduler": "normal",
+                "denoise": 1.0,
+                "model": ["4", 0],
+                "positive": ["6", 0],
+                "negative": ["7", 0],
+                "latent_image": ["5", 0],
+            },
+        },
+        "4": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": "video_model.safetensors"},
+        },
+        "5": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": 512, "height": 512, "batch_size": 16},
+        },
+        "6": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": prompt, "clip": ["4", 1]},
+        },
+        "7": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": "low quality, blurry, distorted",
+                "clip": ["4", 1],
+            },
+        },
+        "8": {
+            "class_type": "VHS_VideoCombine",
+            "inputs": {
+                "images": ["3", 0],
+                "frame_rate": 8,
+                "format": "video/h264-mp4",
+            },
+        },
+    }
+
+
+def _download_comfyui_output(item: dict, cfg: dict, console_obj) -> "str | None":
+    """Download a file from the ComfyUI ``/view`` endpoint.
+
+    *item* has keys: ``filename``, ``subfolder``, ``type``.
+    Saves to ``comfyui_output_dir`` with ``clod_{timestamp}_{hash}.{ext}`` naming.
+    Returns the saved filepath or ``None`` on error.
+    """
+    try:
+        params = urllib.parse.urlencode(
+            {
+                "filename": item["filename"],
+                "subfolder": item.get("subfolder", ""),
+                "type": item.get("type", "output"),
+            }
+        )
+        r = requests.get(f"{COMFYUI_URL}/view?{params}", timeout=30)
+        r.raise_for_status()
+        data = r.content
+
+        ext = os.path.splitext(item["filename"])[1] or ".mp4"
+        output_dir = cfg.get("comfyui_output_dir", ".")
+        return _save_generation_output(data, ext.lstrip("."), output_dir)
+    except Exception:
+        return None
+
+
+def _generate_video(prompt: str, cfg: dict, console_obj) -> "str | None":
+    """Generate video via ComfyUI API.
+
+    POSTs workflow to ``COMFYUI_URL/prompt``, then polls
+    ``/history/{prompt_id}`` every 3 seconds with a status spinner.
+    10-minute timeout.  Returns saved file path or ``None`` on failure.
+    """
+    workflow = _build_video_workflow(prompt)
+
+    try:
+        r = requests.post(
+            f"{COMFYUI_URL}/prompt",
+            json={"prompt": workflow},
+            timeout=30,
+        )
+        r.raise_for_status()
+        prompt_id = r.json()["prompt_id"]
+    except Exception as e:
+        console_obj.print(f"[red]Failed to queue video generation: {e}[/red]")
+        return None
+
+    # Poll /history/{prompt_id} until complete
+    with console_obj.status("[cyan]Generating video...[/cyan]"):
+        deadline = time.time() + 600  # 10-minute timeout
+        while time.time() < deadline:
+            try:
+                r = requests.get(
+                    f"{COMFYUI_URL}/history/{prompt_id}",
+                    timeout=5,
+                )
+                history = r.json()
+                if prompt_id in history:
+                    outputs = history[prompt_id].get("outputs", {})
+                    for _node_id, node_output in outputs.items():
+                        if "gifs" in node_output or "images" in node_output:
+                            items = node_output.get("gifs") or node_output.get("images", [])
+                            if items:
+                                return _download_comfyui_output(items[0], cfg, console_obj)
+            except Exception:
+                pass
+            time.sleep(3)
+
+    console_obj.print("[red]Video generation timed out.[/red]")
+    return None
+
+
+def _ensure_generation_service(intent: str, cfg: dict, console_obj, session_state: dict) -> bool:
+    """Ensure the correct generation service is running for the given intent.
+
+    For ``image_gen``: checks AUTOMATIC1111 via :func:`query_comfyui_running`.
+    If not running, starts it via :func:`_prepare_for_gpu_service`.
+
+    For ``video_gen``: checks ComfyUI via :func:`query_video_running`.  If not
+    running but the image profile is active, warns and confirms before switching
+    profiles.  GPU release verification is handled internally by
+    :func:`_prepare_for_gpu_service`.
+    """
+    if intent == "image_gen":
+        if query_comfyui_running():
+            return True
+        return _prepare_for_gpu_service("stable-diffusion", cfg, console_obj, session_state)
+
+    # video_gen
+    if query_video_running():
+        return True
+
+    if query_comfyui_running():
+        # Image profile running but we need video -- confirm switch
+        console_obj.print(
+            "[yellow]Switching from image to video mode. "
+            "This will stop AUTOMATIC1111 and start ComfyUI.[/yellow]"
+        )
+        ans = console_obj.input("[yellow]Continue? [y/N] [/yellow]").strip().lower()
+        if ans not in ("y", "yes"):
+            return False
+        sd_switch_mode("video", cfg)
+
+    return _prepare_for_gpu_service("comfyui", cfg, console_obj, session_state)
+
+
+def _silent_restore_model(cfg: dict, console_obj, session_state: dict) -> None:
+    """Auto-reload the previous Ollama model without user confirmation.
+
+    Unlike :func:`_restore_after_gpu_service` (which prompts y/N), this
+    silently reloads ``_prev_model``.  Does nothing if no previous model is
+    recorded.  Does **not** modify existing ``_restore_after_gpu_service``
+    (per Pitfall 7).
+    """
+    prev_model = session_state.get("_prev_model")
+    if not prev_model:
+        return
+
+    warmup_ollama_model(prev_model, cfg)
+    session_state["model"] = prev_model
+    session_state.pop("_prev_model", None)
+
+
 def query_system_info() -> dict:
     """
     Return CPU and RAM info.
