@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-03-11T00:11:52.639Z"
-last_activity: 2026-03-10 -- Completed 04-01 (Core Image Generation Pipeline)
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-03-11T00:15:32Z"
+last_activity: 2026-03-10 -- Completed 04-02 (Video Generation & Docker Orchestration)
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 10
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 ---
@@ -56,18 +56,18 @@ See: .planning/PROJECT.md (updated 2026-03-10)
 ## Current Position
 
 Phase: 4 of 6 (Media Generation Pipeline)
-Plan: 1 of 3 in current phase (1 complete)
+Plan: 2 of 3 in current phase (2 complete)
 Status: Executing Phase 04
-Last activity: 2026-03-10 -- Completed 04-01 (Core Image Generation Pipeline)
+Last activity: 2026-03-10 -- Completed 04-02 (Video Generation & Docker Orchestration)
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
+- Total plans completed: 9
 - Average duration: ~10min
-- Total execution time: ~1.1 hours
+- Total execution time: ~1.4 hours
 
 **By Phase:**
 
@@ -83,6 +83,7 @@ Progress: [████████░░] 80%
 
 *Updated after each plan completion*
 | Phase 04 P01 | 13min | 2 tasks | 3 files |
+| Phase 04 P02 | 18min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -116,6 +117,9 @@ Recent decisions affecting current work:
 - 03-02: FakeConsole wraps real rich.console.Console for full Progress/Live compatibility in tests
 - [Phase 04]: Single-shot prompt crafting with graceful fallback to raw user input on error
 - [Phase 04]: txt2img in background thread with 1.5s progress polling and skip_current_image=true
+- [Phase 04]: ComfyUI queue+poll pattern (POST /prompt, GET /history/{id}) with 10min timeout
+- [Phase 04]: _silent_restore_model separate from _restore_after_gpu_service (Pitfall 7)
+- [Phase 04]: Reuse _save_generation_output for ComfyUI downloads, no duplicate logic
 
 ### Roadmap Evolution
 
@@ -131,6 +135,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-11T00:11:52.637Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-03-11T00:15:32Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None

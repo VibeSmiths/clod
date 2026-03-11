@@ -34,15 +34,15 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Video Generation
 
-- [ ] **VID-01**: User can trigger video generation via natural language ("make a video of...", "generate a video of...")
-- [ ] **VID-02**: Chat model crafts a ComfyUI-optimized prompt from the user's natural language description
-- [ ] **VID-03**: If ComfyUI is not running, clod offers to switch docker profiles (image→video) with GPU release verification
+- [x] **VID-01**: User can trigger video generation via natural language ("make a video of...", "generate a video of...")
+- [x] **VID-02**: Chat model crafts a ComfyUI-optimized prompt from the user's natural language description
+- [x] **VID-03**: If ComfyUI is not running, clod offers to switch docker profiles (image→video) with GPU release verification
 
 ### Docker Profile Switching
 
-- [ ] **DOCK-01**: Clod automatically detects when a docker profile switch is needed (image↔video) based on user intent
-- [ ] **DOCK-02**: Before switching profiles, clod warns the user and waits for confirmation ("Switching from image to video mode, this will stop AUTOMATIC1111...")
-- [ ] **DOCK-03**: Profile switch includes GPU release verification — confirms VRAM is freed before starting the new profile
+- [x] **DOCK-01**: Clod automatically detects when a docker profile switch is needed (image↔video) based on user intent
+- [x] **DOCK-02**: Before switching profiles, clod warns the user and waits for confirmation ("Switching from image to video mode, this will stop AUTOMATIC1111...")
+- [x] **DOCK-03**: Profile switch includes GPU release verification — confirms VRAM is freed before starting the new profile
 
 ### Face Swap
 
@@ -118,12 +118,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | IMG-02 | Phase 4 | Complete |
 | IMG-03 | Phase 4 | Complete |
 | IMG-04 | Phase 4 | Complete |
-| VID-01 | Phase 4 | Pending |
-| VID-02 | Phase 4 | Pending |
-| VID-03 | Phase 4 | Pending |
-| DOCK-01 | Phase 4 | Pending |
-| DOCK-02 | Phase 4 | Pending |
-| DOCK-03 | Phase 4 | Pending |
+| VID-01 | Phase 4 | Complete |
+| VID-02 | Phase 4 | Complete |
+| VID-03 | Phase 4 | Complete |
+| DOCK-01 | Phase 4 | Complete |
+| DOCK-02 | Phase 4 | Complete |
+| DOCK-03 | Phase 4 | Complete |
 | FACE-01 | Phase 5 | Pending |
 | FACE-02 | Phase 5 | Pending |
 | FACE-03 | Phase 5 | Pending |
