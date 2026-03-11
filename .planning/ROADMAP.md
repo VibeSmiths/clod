@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: VRAM Management & Offline Gating** - Safe model lifecycle and system-level feature gating (completed 2026-03-10)
 - [ ] **Phase 2: Intent Classification** - CPU-based user input classification via ONNX embeddings + keyword rules
 - [ ] **Phase 3: Smart Model Routing** - Auto-select and switch models with user confirmation
-- [x] **Phase 4: Media Generation Pipeline** - Natural language image/video generation with docker profile orchestration (completed 2026-03-11)
+- [x] **Phase 4: Media Generation Pipeline** - Natural language image/video generation with docker profile orchestration (completed 2026-03-11)
 - [ ] **Phase 5: Face Swap** - ReActor-based face swap with slash commands and natural language triggers
 
 ## Phase Details
@@ -100,7 +100,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -109,13 +109,16 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 3. Smart Model Routing | 0/2 | Not started | - |
 | 4. Media Generation Pipeline | 3/3 | Complete   | 2026-03-11 |
 | 5. Face Swap | 0/2 | Not started | - |
+| 6. Docker Service Integration & Testing | 0/3 | Not started | - |
 
 ### Phase 6: Docker Service Integration & Testing
 
-**Goal:** [To be planned]
-**Requirements**: TBD
-**Depends on:** Phase 5
-**Plans:** 3/3 plans complete
+**Goal:** Comprehensive mocked test coverage for Docker service lifecycle, generation pipeline failure scenarios, and CI coverage enforcement at 90%+
+**Requirements**: TEST-SVC-01, TEST-SVC-02, TEST-SVC-03, TEST-DOCK-01, TEST-GEN-01, TEST-GEN-02, TEST-GEN-03, TEST-CI-01, TEST-CONS-01
+**Depends on:** Phase 4
+**Plans:** 3 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 6 to break down)
+- [ ] 06-01-PLAN.md — /services slash command routing tests + _reset_service and _compose_base direct tests
+- [ ] 06-02-PLAN.md — Generation E2E failure scenarios with file output verification
+- [ ] 06-03-PLAN.md — Consolidate test_inference.py into unit tests + CI coverage gate
