@@ -29,14 +29,11 @@ config_datas = [
     ('.env.example',                    '.'),
 ]
 
-# Intent classification model files (Phase 2) — only bundle if present
-import os as _os
+# Intent classification model files (Phase 2)
 intent_model_datas = [
-    (p, 'models/intent') for p in [
-        'models/intent/model_quint8_avx2.onnx',
-        'models/intent/tokenizer.json',
-        'models/intent/route_embeddings.npz',
-    ] if _os.path.exists(p)
+    ('models/intent/model_quint8_avx2.onnx', 'models/intent'),
+    ('models/intent/tokenizer.json', 'models/intent'),
+    ('models/intent/route_embeddings.npz', 'models/intent'),
 ]
 
 a = Analysis(
