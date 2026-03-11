@@ -17,6 +17,8 @@ Usage:
 """
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import pathlib
@@ -25,8 +27,10 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
+from datetime import datetime
 from typing import Generator, Optional
 
 import requests
@@ -69,6 +73,17 @@ SD_WEBUI_URL = "http://localhost:7860"  # AUTOMATIC1111 WebUI (stable-diffusion 
 COMFYUI_URL = "http://localhost:8188"  # ComfyUI video service
 MCP_SERVER_PORT = 8765  # MCP filesystem server (localhost only)
 
+VIDEO_PROMPT_SYSTEM = (
+    "You are a video generation prompt engineer. Convert the user's description "
+    "into an optimized prompt for AI video generation.\n\n"
+    "Rules:\n"
+    "1. Output ONLY the optimized prompt, nothing else\n"
+    "2. Describe motion and temporal progression\n"
+    "3. Include camera movement if appropriate (pan, zoom, tracking shot)\n"
+    "4. Specify style and mood\n"
+    "5. Keep it concise (1-3 sentences)"
+)
+
 SONNET_MODEL = "claude-sonnet-4-6"
 
 # Per-pipeline model assignments — local (Ollama) + Claude (LiteLLM alias).
@@ -102,6 +117,46 @@ INTENT_MODEL_MAP: dict[str, str | None] = {
     "image_gen": None,  # Phase 4
     "image_edit": None,  # Phase 4
     "video_gen": None,  # Phase 4
+}
+
+# ── Image Generation Constants ────────────────────────────────────────────────
+
+SD_PROMPT_SYSTEM = """You are a Stable Diffusion prompt engineer. Convert the user's natural language description into an optimized SD prompt.
+
+Rules:
+1. Output ONLY the optimized prompt, nothing else
+2. Use comma-separated tags and descriptive phrases
+3. Include quality boosters: masterpiece, best quality, highly detailed
+4. Include relevant style/lighting/composition terms
+5. If the user mentions things to exclude (e.g., "but no people"), output them on a second line prefixed with EXCLUDE:
+
+Example input: "a sunset over mountains, but no clouds"
+Example output:
+masterpiece, best quality, sunset over mountain range, golden hour, dramatic sky, vivid colors, landscape photography, highly detailed
+EXCLUDE: clouds"""
+
+SD15_NEGATIVES = (
+    "low quality, worst quality, ugly, blurry, extra limbs, extra fingers, "
+    "mutated hands, poorly drawn hands, poorly drawn face, deformed, "
+    "disfigured, watermark, text, signature, out of frame"
+)
+
+SDXL_NEGATIVES = "low quality, worst quality, watermark, text, signature"
+
+SD_DEFAULT_PARAMS = {
+    "steps": 25,
+    "cfg_scale": 7,
+    "width": 512,
+    "height": 512,
+    "sampler_name": "DPM++ 2M",
+}
+
+SDXL_DEFAULT_PARAMS = {
+    "steps": 25,
+    "cfg_scale": 7,
+    "width": 1024,
+    "height": 1024,
+    "sampler_name": "DPM++ 2M",
 }
 
 # Token-budget thresholds (fraction of session budget)
@@ -813,6 +868,180 @@ def _restore_after_gpu_service(
     # Clear regardless of answer
     session_state.pop("_prev_model", None)
     return True
+
+
+# ── Image Generation Pipeline ─────────────────────────────────────────────────
+
+
+def _parse_crafted_prompt(response_text: str) -> tuple[str, str]:
+    """Parse LLM response into (positive_prompt, user_exclusions).
+
+    The LLM may output a second line prefixed with ``EXCLUDE:`` to indicate
+    elements the user wants removed. Everything before that line is the
+    positive prompt.
+    """
+    lines = response_text.strip().split("\n")
+    positive_lines: list[str] = []
+    user_exclusions = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.upper().startswith("EXCLUDE:"):
+            user_exclusions = stripped[len("EXCLUDE:") :].strip()
+        else:
+            positive_lines.append(stripped)
+    positive = "\n".join(positive_lines).strip()
+    return positive, user_exclusions
+
+
+def _craft_sd_prompt(user_request: str, cfg: dict) -> tuple[str, str]:
+    """Craft an SD-optimized prompt from the user's natural language.
+
+    Calls Ollama ``llama3.1:8b`` with :data:`SD_PROMPT_SYSTEM` as system
+    prompt.  Returns ``(positive_prompt, user_exclusions)``.  Falls back to
+    ``(user_request, "")`` on any error.
+    """
+    try:
+        messages = [
+            {"role": "system", "content": SD_PROMPT_SYSTEM},
+            {"role": "user", "content": user_request},
+        ]
+        r = requests.post(
+            f"{cfg['ollama_url']}/api/chat",
+            json={"model": "llama3.1:8b", "messages": messages, "stream": False},
+            timeout=60,
+        )
+        r.raise_for_status()
+        response_text = r.json()["message"]["content"]
+        return _parse_crafted_prompt(response_text)
+    except Exception:
+        return (user_request, "")
+
+
+def _detect_sd_model_type() -> str:
+    """Detect whether the loaded SD model is SDXL or SD1.5.
+
+    Queries AUTOMATIC1111's ``/sdapi/v1/options`` and matches the checkpoint
+    name for ``sdxl``, ``xl``, or ``pony`` (case-insensitive).  Falls back to
+    ``"sd15"`` on any error.
+    """
+    try:
+        r = requests.get(f"{SD_WEBUI_URL}/sdapi/v1/options", timeout=5)
+        if r.status_code == 200:
+            checkpoint = r.json().get("sd_model_checkpoint", "").lower()
+            if any(tag in checkpoint for tag in ("sdxl", "xl", "pony")):
+                return "sdxl"
+    except Exception:
+        pass
+    return "sd15"
+
+
+def _get_negative_prompts(model_type: str, user_exclusions: str = "") -> str:
+    """Return default negative prompts for the given *model_type*.
+
+    Appends *user_exclusions* (comma-separated) if non-empty.
+    """
+    base = SDXL_NEGATIVES if model_type == "sdxl" else SD15_NEGATIVES
+    if user_exclusions:
+        return f"{base}, {user_exclusions}"
+    return base
+
+
+def _save_generation_output(data: bytes, ext: str, output_dir: str) -> str:
+    """Save generation output bytes and return the file path.
+
+    Naming convention: ``clod_{YYYYMMDD}_{HHMMSS}_{hash4}.{ext}``
+    Creates *output_dir* if it does not exist.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_hash = hashlib.md5(data[:256]).hexdigest()[:4]
+    filename = f"clod_{ts}_{short_hash}.{ext}"
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, "wb") as f:
+        f.write(data)
+    return filepath
+
+
+def _generate_image(
+    prompt: str,
+    negative: str,
+    params: dict,
+    cfg: dict,
+    console_obj,
+) -> str | None:
+    """Generate an image via AUTOMATIC1111's txt2img API with Rich progress.
+
+    Submits the generation request in a background thread while the main
+    thread polls ``/sdapi/v1/progress`` to update a Rich progress bar.
+    Returns the saved file path, or ``None`` on error.
+    """
+    payload = {
+        "prompt": prompt,
+        "negative_prompt": negative,
+        "steps": params.get("steps", 25),
+        "cfg_scale": params.get("cfg_scale", 7),
+        "width": params.get("width", 512),
+        "height": params.get("height", 512),
+        "sampler_name": params.get("sampler_name", "DPM++ 2M"),
+        "save_images": False,
+    }
+
+    result_holder: dict = {"response": None, "error": None}
+
+    def _do_generate() -> None:
+        try:
+            r = requests.post(
+                f"{SD_WEBUI_URL}/sdapi/v1/txt2img",
+                json=payload,
+                timeout=300,
+            )
+            r.raise_for_status()
+            result_holder["response"] = r.json()
+        except Exception as e:
+            result_holder["error"] = str(e)
+
+    thread = threading.Thread(target=_do_generate)
+    thread.start()
+
+    # Poll progress with Rich Progress bar
+    with Progress(
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        console=console_obj,
+    ) as progress:
+        task = progress.add_task("Generating...", total=100)
+        while thread.is_alive():
+            try:
+                pr = requests.get(
+                    f"{SD_WEBUI_URL}/sdapi/v1/progress?skip_current_image=true",
+                    timeout=5,
+                )
+                pdata = pr.json()
+                pct = pdata.get("progress", 0) * 100
+                progress.update(task, completed=pct)
+            except Exception:
+                pass
+            time.sleep(1.5)
+        progress.update(task, completed=100)
+
+    thread.join()
+
+    if result_holder["error"] or not result_holder["response"]:
+        console_obj.print(f"[red]Generation failed: {result_holder.get('error', 'unknown')}[/red]")
+        return None
+
+    images = result_holder["response"].get("images", [])
+    if not images:
+        return None
+
+    # Decode base64 image (handle optional data URI prefix)
+    img_b64 = images[0].split(",", 1)[-1]
+    img_data = base64.b64decode(img_b64)
+
+    output_dir = cfg.get("sd_output_dir", ".")
+    return _save_generation_output(img_data, "png", output_dir)
 
 
 def query_system_info() -> dict:

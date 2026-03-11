@@ -86,3 +86,11 @@ def mock_session_state(mock_cfg):
         "last_confidence": 0.0,
         "intent_verbose": False,
     }
+
+
+@pytest.fixture
+def mock_generation_state(mock_session_state):
+    """Extend mock_session_state with generation-related fields."""
+    mock_session_state["sd_mode"] = "image"
+    mock_session_state["_prev_model"] = None
+    return mock_session_state
