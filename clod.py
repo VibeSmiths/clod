@@ -1696,17 +1696,23 @@ def _offer_docker_startup(cfg: dict, missing: list, console_obj: Console) -> boo
         return False
 
     try:
+        console_obj.print(
+            "[dim]Running docker compose up -d (this may take a few minutes on first run)…[/dim]"
+        )
         r = subprocess.run(
             _compose_base(cfg) + ["up", "-d"],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
         if r.returncode != 0:
             console_obj.print(f"[red]docker compose up failed:\n{r.stderr.strip()}[/red]")
             return False
     except FileNotFoundError:
         console_obj.print("[red]docker CLI not found. Install Docker Desktop and try again.[/red]")
+        return False
+    except KeyboardInterrupt:
+        console_obj.print("\n[yellow]Docker startup cancelled.[/yellow]")
         return False
     except Exception as e:
         console_obj.print(f"[red]Failed to start services: {e}[/red]")
