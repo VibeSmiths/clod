@@ -109,14 +109,14 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 3. Smart Model Routing | 0/2 | Not started | - |
 | 4. Media Generation Pipeline | 3/3 | Complete   | 2026-03-11 |
 | 5. Face Swap | 0/2 | Not started | - |
-| 6. Docker Service Integration & Testing | 0/3 | Not started | - |
+| 6. Docker Service Integration & Testing | 2/3 | In Progress|  |
 
 ### Phase 6: Docker Service Integration & Testing
 
 **Goal:** Comprehensive mocked test coverage for Docker service lifecycle, generation pipeline failure scenarios, and CI coverage enforcement at 90%+
 **Requirements**: TEST-SVC-01, TEST-SVC-02, TEST-SVC-03, TEST-DOCK-01, TEST-GEN-01, TEST-GEN-02, TEST-GEN-03, TEST-CI-01, TEST-CONS-01
 **Depends on:** Phase 4
-**Plans:** 3 plans
+**Plans:** 2/3 plans executed
 
 Plans:
 - [ ] 06-01-PLAN.md — /services slash command routing tests + _reset_service and _compose_base direct tests
