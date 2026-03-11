@@ -188,11 +188,10 @@ class TestEmbeddingClassification:
         self, mock_onnx_session, mock_tokenizer, mock_route_embeddings
     ):
         """Embedding path returns a valid intent for ambiguous input."""
-        from intent import _classify_embedding, IntentEmbedder, INTENTS
         import intent as intent_mod
 
         # Set up mocked embedder
-        embedder = IntentEmbedder.__new__(IntentEmbedder)
+        embedder = intent_mod.IntentEmbedder.__new__(intent_mod.IntentEmbedder)
         embedder._session = mock_onnx_session
         embedder._tokenizer = mock_tokenizer
         embedder._input_names = ["input_ids", "attention_mask"]
@@ -206,8 +205,10 @@ class TestEmbeddingClassification:
             patch.object(intent_mod, "_route_centroids", data["centroids"]),
             patch.object(intent_mod, "_route_intent_names", data["intent_names"].tolist()),
         ):
-            result_intent, conf = _classify_embedding("can you help me think through this problem")
-            assert result_intent in INTENTS
+            result_intent, conf = intent_mod._classify_embedding(
+                "can you help me think through this problem"
+            )
+            assert result_intent in intent_mod.INTENTS
             assert 0.0 <= conf <= 1.0
 
     def test_embedder_init_resolves_paths(self, tmp_path):
@@ -248,10 +249,9 @@ class TestEmbeddingClassification:
         self, mock_onnx_session, mock_tokenizer, mock_route_embeddings
     ):
         """When embedding similarity is low, confidence reflects actual score."""
-        from intent import classify_intent, INTENTS, IntentEmbedder
         import intent as intent_mod
 
-        embedder = IntentEmbedder.__new__(IntentEmbedder)
+        embedder = intent_mod.IntentEmbedder.__new__(intent_mod.IntentEmbedder)
         embedder._session = mock_onnx_session
         embedder._tokenizer = mock_tokenizer
         embedder._input_names = ["input_ids", "attention_mask"]
@@ -264,8 +264,8 @@ class TestEmbeddingClassification:
             patch.object(intent_mod, "_route_intent_names", data["intent_names"].tolist()),
         ):
             # "hello" doesn't match keywords, so falls through to embedding
-            intent_name, conf = classify_intent("hello")
-            assert intent_name in INTENTS
+            intent_name, conf = intent_mod.classify_intent("hello")
+            assert intent_name in intent_mod.INTENTS
             # With mock data, confidence will be whatever cosine sim produces
             assert isinstance(conf, float)
 

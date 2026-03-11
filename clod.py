@@ -1266,7 +1266,6 @@ def _handle_generation_intent(
         _ensure_model_ready("llama3.1:8b", cfg, console_obj, session_state, confirm=False)
 
         # c. Craft prompt
-        prompt = user_input
         exclusions = ""
         try:
             if intent == "image_gen":

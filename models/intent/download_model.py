@@ -46,10 +46,19 @@ def build_centroids() -> None:
         print("  route_embeddings.npz already exists, skipping")
         return
     print("  Building route_embeddings.npz ...")
+    # Add project root to path so build_routes can import intent module
+    project_root = str(MODEL_DIR.parent.parent)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
     sys.path.insert(0, str(MODEL_DIR))
     from build_routes import build_centroids as _build
+    from build_routes import ROUTES
+    from intent import IntentEmbedder
 
-    _build()
+    model_path = str(MODEL_DIR / "model_quint8_avx2.onnx")
+    tokenizer_path = str(MODEL_DIR / "tokenizer.json")
+    embedder = IntentEmbedder(model_path, tokenizer_path)
+    _build(embedder, ROUTES, str(npz))
     print("  route_embeddings.npz created")
 
 

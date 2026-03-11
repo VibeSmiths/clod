@@ -12,7 +12,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))
 
 import pytest
 import responses
-import clod
 from clod import infer
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
