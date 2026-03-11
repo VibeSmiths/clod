@@ -634,7 +634,7 @@ def recommend_model_for_vram(total_mb: int) -> Optional[str]:
 def _get_loaded_models(cfg: dict) -> list[dict]:
     """Query Ollama /api/ps for currently loaded models. Returns [] on error."""
     try:
-        r = requests.get(f"{cfg["ollama_url"]}/api/ps", timeout=5)
+        r = requests.get(f"{cfg['ollama_url']}/api/ps", timeout=5)
         if r.status_code == 200:
             return r.json().get("models", [])
         return []
@@ -647,7 +647,7 @@ def _unload_model(model_name: str, cfg: dict) -> bool:
     for attempt in range(2):
         try:
             r = requests.post(
-                f"{cfg["ollama_url"]}/api/generate",
+                f"{cfg['ollama_url']}/api/generate",
                 json={"model": model_name, "prompt": "", "keep_alive": 0},
                 timeout=30,
             )
@@ -677,8 +677,8 @@ def _vram_transition_panel(phase: str, console_obj) -> None:
     used_mb = gpu["total_mb"] - gpu["free_mb"]
     console_obj.print(
         Panel(
-            f"VRAM: {used_mb}/{gpu["total_mb"]} MB used  "
-            f"({gpu["free_mb"]} MB free)  --  {gpu["name"]}",
+            f"VRAM: {used_mb}/{gpu['total_mb']} MB used  "
+            f"({gpu['free_mb']} MB free)  --  {gpu['name']}",
             title=f"[cyan]{phase}[/cyan]",
             border_style="dim",
             expand=False,
