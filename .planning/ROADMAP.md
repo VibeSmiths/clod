@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: VRAM Management & Offline Gating** - Safe model lifecycle and system-level feature gating (completed 2026-03-10)
 - [ ] **Phase 2: Intent Classification** - CPU-based user input classification via ONNX embeddings + keyword rules
 - [ ] **Phase 3: Smart Model Routing** - Auto-select and switch models with user confirmation
-- [ ] **Phase 4: Media Generation Pipeline** - Natural language image/video generation with docker profile orchestration
+- [x] **Phase 4: Media Generation Pipeline** - Natural language image/video generation with docker profile orchestration (completed 2026-03-11)
 - [ ] **Phase 5: Face Swap** - ReActor-based face swap with slash commands and natural language triggers
 
 ## Phase Details
@@ -107,7 +107,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. VRAM Management & Offline Gating | 3/3 | Complete   | 2026-03-10 |
 | 2. Intent Classification | 0/2 | Not started | - |
 | 3. Smart Model Routing | 0/2 | Not started | - |
-| 4. Media Generation Pipeline | 2/3 | In Progress|  |
+| 4. Media Generation Pipeline | 3/3 | Complete   | 2026-03-11 |
 | 5. Face Swap | 0/2 | Not started | - |
 
 ### Phase 6: Docker Service Integration & Testing
@@ -115,7 +115,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 **Goal:** [To be planned]
 **Requirements**: TBD
 **Depends on:** Phase 5
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] TBD (run /gsd:plan-phase 6 to break down)
