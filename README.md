@@ -399,22 +399,62 @@ git config core.hooksPath .githooks
 
 ## Screenshots
 
+### Startup Banner
+
+![startup banner](assets/startup_banner.svg)
+
 ### Help
 
-![help](assets/help.png)
+![help](assets/help.svg)
 
 ### Header — default
 
-![header default](assets/header_default.png)
+![header default](assets/header_default.svg)
 
 ### Header — pipeline active
 
-![header pipeline](assets/header_pipeline.png)
+![header pipeline](assets/header_pipeline.svg)
 
 ### Header — token budget warning (45%)
 
-![header tokens](assets/header_tokens.png)
+![header tokens](assets/header_tokens.svg)
 
 ### Header — offline mode (86% used)
 
-![header offline](assets/header_offline.png)
+![header offline](assets/header_offline.svg)
+
+### Service Health
+
+![services status](assets/services_status.svg)
+
+### Docker Startup
+
+![services start](assets/services_start.svg)
+
+### GPU & VRAM
+
+![gpu info](assets/gpu_info.svg)
+
+### Intent Classification
+
+![intent classify](assets/intent_classify.svg)
+
+### Stable Diffusion Status
+
+![sd status](assets/sd_status.svg)
+
+### Image Generation
+
+![generate image](assets/generate_image.svg)
+
+### Model Switching
+
+![model switch](assets/model_switch.svg)
+
+### Tool Use
+
+![tool call](assets/tool_call.svg)
+
+### Token Budget
+
+![tokens](assets/tokens.svg)

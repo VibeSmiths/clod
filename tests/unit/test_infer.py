@@ -222,7 +222,7 @@ def test_infer_tool_call_loop(monkeypatch, fake_console, mock_cfg):
 
     execute_calls = []
 
-    def fake_execute_tool(name, args, console, cfg):
+    def fake_execute_tool(name, args, console, cfg, features=None):
         execute_calls.append(name)
         return "tool_result"
 
@@ -256,7 +256,9 @@ def test_infer_tool_call_adds_messages(monkeypatch, fake_console, mock_cfg):
         return ("done", [])
 
     monkeypatch.setattr(clod, "stream_and_render", fake_stream_and_render)
-    monkeypatch.setattr(clod, "execute_tool", lambda name, args, console, cfg: "file content")
+    monkeypatch.setattr(
+        clod, "execute_tool", lambda name, args, console, cfg, features=None: "file content"
+    )
 
     clod.infer(messages, "qwen2.5-coder:14b", None, mock_cfg, True)
 

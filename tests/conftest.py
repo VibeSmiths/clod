@@ -17,6 +17,27 @@ def fake_console(monkeypatch):
     """Monkeypatch clod.console with a no-op object."""
 
     class _FakeConsole:
+        """Wraps a real rich.console.Console writing to /dev/null so that
+        Rich components (Progress, Live, etc.) work, while keeping output
+        suppressed and easy to override in tests."""
+
+        def __init__(self):
+            import io
+            from rich.console import Console as _RC
+
+            self._real = _RC(file=io.StringIO(), force_terminal=True, width=80)
+
+        def __getattr__(self, name):
+            # Delegate anything not explicitly overridden to the real Console
+            return getattr(self._real, name)
+
+        # Dunder methods are not resolved via __getattr__, so delegate explicitly
+        def __enter__(self):
+            return self._real.__enter__()
+
+        def __exit__(self, *args):
+            return self._real.__exit__(*args)
+
         def print(self, *args, **kwargs):
             pass
 
@@ -60,4 +81,16 @@ def mock_session_state(mock_cfg):
         "cfg": mock_cfg,
         "budget": clod.TokenBudget(10000),
         "offline": False,
+        "intent_enabled": True,
+        "last_intent": None,
+        "last_confidence": 0.0,
+        "intent_verbose": False,
     }
+
+
+@pytest.fixture
+def mock_generation_state(mock_session_state):
+    """Extend mock_session_state with generation-related fields."""
+    mock_session_state["sd_mode"] = "image"
+    mock_session_state["_prev_model"] = None
+    return mock_session_state

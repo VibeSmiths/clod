@@ -17,6 +17,8 @@ Usage:
 """
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import pathlib
@@ -25,8 +27,10 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
+from datetime import datetime
 from typing import Generator, Optional
 
 import requests
@@ -37,12 +41,27 @@ try:
     HAS_PSUTIL = True
 except ImportError:
     HAS_PSUTIL = False
+
+try:
+    from intent import classify_intent
+
+    HAS_INTENT = True
+except ImportError:
+    HAS_INTENT = False
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.progress import (
+    Progress,
+    BarColumn,
+    TextColumn,
+    DownloadColumn,
+    TransferSpeedColumn,
+    TimeRemainingColumn,
+)
 
 __version__ = "1.0.0"
 
@@ -53,6 +72,17 @@ CLOUD_MODEL_PREFIXES = ("claude-", "gpt-", "o1-", "o3-", "gemini-", "groq-", "to
 SD_WEBUI_URL = "http://localhost:7860"  # AUTOMATIC1111 WebUI (stable-diffusion container)
 COMFYUI_URL = "http://localhost:8188"  # ComfyUI video service
 MCP_SERVER_PORT = 8765  # MCP filesystem server (localhost only)
+
+VIDEO_PROMPT_SYSTEM = (
+    "You are a video generation prompt engineer. Convert the user's description "
+    "into an optimized prompt for AI video generation.\n\n"
+    "Rules:\n"
+    "1. Output ONLY the optimized prompt, nothing else\n"
+    "2. Describe motion and temporal progression\n"
+    "3. Include camera movement if appropriate (pan, zoom, tracking shot)\n"
+    "4. Specify style and mood\n"
+    "5. Keep it concise (1-3 sentences)"
+)
 
 SONNET_MODEL = "claude-sonnet-4-6"
 
@@ -75,6 +105,58 @@ PIPELINE_CONFIGS: dict[str, dict] = {
         "claude": "claude-haiku",
         "description": "Conversational draft → light polish",
     },
+}
+
+# Intent → model mapping for smart routing (Phase 3).
+# None means the intent is handled by a non-model service (Phase 4).
+INTENT_MODEL_MAP: dict[str, str | None] = {
+    "chat": "llama3.1:8b",
+    "code": "qwen2.5-coder:14b",
+    "reason": "deepseek-r1:14b",
+    "vision": "qwen2.5vl:7b",
+    "image_gen": None,  # Phase 4
+    "image_edit": None,  # Phase 4
+    "video_gen": None,  # Phase 4
+}
+
+# ── Image Generation Constants ────────────────────────────────────────────────
+
+SD_PROMPT_SYSTEM = """You are a Stable Diffusion prompt engineer. Convert the user's natural language description into an optimized SD prompt.
+
+Rules:
+1. Output ONLY the optimized prompt, nothing else
+2. Use comma-separated tags and descriptive phrases
+3. Include quality boosters: masterpiece, best quality, highly detailed
+4. Include relevant style/lighting/composition terms
+5. If the user mentions things to exclude (e.g., "but no people"), output them on a second line prefixed with EXCLUDE:
+
+Example input: "a sunset over mountains, but no clouds"
+Example output:
+masterpiece, best quality, sunset over mountain range, golden hour, dramatic sky, vivid colors, landscape photography, highly detailed
+EXCLUDE: clouds"""
+
+SD15_NEGATIVES = (
+    "low quality, worst quality, ugly, blurry, extra limbs, extra fingers, "
+    "mutated hands, poorly drawn hands, poorly drawn face, deformed, "
+    "disfigured, watermark, text, signature, out of frame"
+)
+
+SDXL_NEGATIVES = "low quality, worst quality, watermark, text, signature"
+
+SD_DEFAULT_PARAMS = {
+    "steps": 25,
+    "cfg_scale": 7,
+    "width": 512,
+    "height": 512,
+    "sampler_name": "DPM++ 2M",
+}
+
+SDXL_DEFAULT_PARAMS = {
+    "steps": 25,
+    "cfg_scale": 7,
+    "width": 1024,
+    "height": 1024,
+    "sampler_name": "DPM++ 2M",
 }
 
 # Token-budget thresholds (fraction of session budget)
@@ -381,7 +463,13 @@ def tool_web_search(args: dict, searxng_url: str) -> str:
         return f"Search error: {e}"
 
 
-def execute_tool(name: str, args: dict, console: Console, cfg: dict) -> str:
+def execute_tool(
+    name: str,
+    args: dict,
+    console: Console,
+    cfg: dict,
+    features: Optional[dict] = None,
+) -> str:
     if name == "bash_exec":
         return tool_bash_exec(args, console)
     elif name == "read_file":
@@ -389,6 +477,8 @@ def execute_tool(name: str, args: dict, console: Console, cfg: dict) -> str:
     elif name == "write_file":
         return tool_write_file(args)
     elif name == "web_search":
+        if features and not features.get("web_search_enabled", True):
+            return "Web search is disabled. Use /search on to re-enable."
         return tool_web_search(args, cfg["searxng_url"])
     else:
         return f"Unknown tool: {name}"
@@ -437,29 +527,32 @@ def ollama_pull(model: str, ollama_url: str) -> None:
         console.print(f"[red]Ollama pull error: {e}[/red]")
         return
 
-    last_status = ""
-    for raw in resp.iter_lines():
-        if not raw:
-            continue
-        try:
-            event = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-
-        status = event.get("status", "")
-        total = event.get("total", 0)
-        completed = event.get("completed", 0)
-
-        if status != last_status:
-            last_status = status
-            if total and completed:
-                pct = int(completed / total * 100)
-                bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-                console.print(f"  [cyan][{bar}][/cyan] {pct:3d}%  {status}", end="\r")
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Pulling {model}", total=None)
+        for raw in resp.iter_lines():
+            if not raw:
+                continue
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            status = event.get("status", "")
+            total = event.get("total", 0)
+            completed = event.get("completed", 0)
+            if total:
+                progress.update(task, total=total, completed=completed, description=status)
             else:
-                console.print(f"  [dim]{status}[/dim]")
+                progress.update(task, description=status)
 
-    console.print(f"\n[green]done[/green] [bold]{model}[/bold] ready")
+    console.print(f"[green]done[/green] [bold]{model}[/bold] ready")
 
 
 def ensure_ollama_model(model: str, cfg: dict) -> bool:
@@ -533,6 +626,711 @@ def recommend_model_for_vram(total_mb: int) -> Optional[str]:
         if effective >= min_mb:
             return model
     return None
+
+
+# ── VRAM Management ──────────────────────────────────────────────────────────
+
+
+def _get_loaded_models(cfg: dict) -> list[dict]:
+    """Query Ollama /api/ps for currently loaded models. Returns [] on error."""
+    try:
+        r = requests.get(f"{cfg['ollama_url']}/api/ps", timeout=5)
+        if r.status_code == 200:
+            return r.json().get("models", [])
+        return []
+    except Exception:
+        return []
+
+
+def _unload_model(model_name: str, cfg: dict) -> bool:
+    """Unload a model from Ollama VRAM via keep_alive:0. Retries once on failure."""
+    for attempt in range(2):
+        try:
+            r = requests.post(
+                f"{cfg['ollama_url']}/api/generate",
+                json={"model": model_name, "prompt": "", "keep_alive": 0},
+                timeout=30,
+            )
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
+        if attempt == 0:
+            time.sleep(3)
+    return False
+
+
+def _verify_vram_free(min_free_mb: int = 4000) -> bool:
+    """Return True if GPU has enough free VRAM. True when no GPU detected (graceful)."""
+    gpu = query_gpu_vram()
+    if gpu is None:
+        return True  # No GPU monitoring -- proceed optimistically
+    return gpu["free_mb"] >= min_free_mb
+
+
+def _vram_transition_panel(phase: str, console_obj) -> None:
+    """Print a Rich panel showing current VRAM usage with phase label. No-op if no GPU."""
+    gpu = query_gpu_vram()
+    if gpu is None:
+        console_obj.print("[dim]GPU monitoring unavailable -- skipping VRAM verification[/dim]")
+        return
+    used_mb = gpu["total_mb"] - gpu["free_mb"]
+    console_obj.print(
+        Panel(
+            f"VRAM: {used_mb}/{gpu['total_mb']} MB used  "
+            f"({gpu['free_mb']} MB free)  --  {gpu['name']}",
+            title=f"[cyan]{phase}[/cyan]",
+            border_style="dim",
+            expand=False,
+        )
+    )
+
+
+def _ensure_model_ready(
+    target: str,
+    cfg: dict,
+    console_obj,
+    session_state: dict,
+    confirm: bool = True,
+) -> bool:
+    """
+    Ensure *target* model is loaded in Ollama. If a different model is loaded,
+    prompt the user for confirmation (when confirm=True), unload old models,
+    and load/pull the target. Returns False if user declines.
+    """
+    loaded = _get_loaded_models(cfg)
+    loaded_names = [m.get("name", "") for m in loaded]
+
+    # Already loaded -- nothing to do
+    if target in loaded_names:
+        return True
+
+    # Different model loaded -- ask user
+    if confirm and loaded_names:
+        ans = (
+            console_obj.input(f"[yellow]This needs [bold]{target}[/bold]. Switch? [y/N] [/yellow]")
+            .strip()
+            .lower()
+        )
+        if ans not in ("y", "yes"):
+            return False
+
+    # Unload all loaded models
+    for m in loaded:
+        name = m.get("name", "")
+        if name:
+            _vram_transition_panel("Unloading...", console_obj)
+            _unload_model(name, cfg)
+
+    # Poll VRAM free (up to 10s)
+    for _ in range(5):
+        if _verify_vram_free(2000):
+            break
+        time.sleep(2)
+
+    _vram_transition_panel("Loading...", console_obj)
+
+    # Ensure model is available (pull if needed) then warm up
+    ensure_ollama_model(target, cfg)
+    warmup_ollama_model(target, cfg)
+
+    _vram_transition_panel("Ready", console_obj)
+    session_state["model"] = target
+    return True
+
+
+def _route_to_model(
+    intent: str,
+    confidence: float,
+    session_state: dict,
+    console_obj,
+) -> bool:
+    """Route to appropriate model based on classified intent.
+
+    Returns True if routing proceeded (or was skipped), False if switch failed.
+    """
+    if not session_state.get("intent_enabled", True):
+        return True
+    if confidence < 0.8:
+        return True
+    target = INTENT_MODEL_MAP.get(intent)
+    if target is None:
+        return True  # non-model intents (Phase 4)
+    current = session_state["model"]
+    if current == target:
+        return True
+    # Don't auto-route away from cloud models
+    if any(current.startswith(p) for p in CLOUD_MODEL_PREFIXES):
+        return True
+    console_obj.print(f"[cyan]Switching to [bold]{target}[/bold] for {intent}...[/cyan]")
+    ok = _ensure_model_ready(
+        target, session_state["cfg"], console_obj, session_state, confirm=False
+    )
+    if not ok:
+        console_obj.print("[dim]Model switch failed, continuing with current model.[/dim]")
+    return ok
+
+
+def _check_gpu_service_health(service_name: str) -> bool:
+    """Check if a GPU service (SD/ComfyUI) is reachable."""
+    if service_name == "stable-diffusion":
+        return query_comfyui_running()
+    if service_name == "comfyui":
+        return query_video_running()
+    return False
+
+
+def _prepare_for_gpu_service(
+    service_name: str,
+    cfg: dict,
+    console_obj,
+    session_state: dict,
+) -> bool:
+    """
+    Free GPU VRAM and start a GPU service (SD/ComfyUI).
+    Full handoff: unload models -> verify VRAM -> docker compose up -> poll health.
+    Saves previous model name for later restore.
+    Only unloads LLM models if VRAM usage exceeds 30%.
+    """
+    loaded = _get_loaded_models(cfg)
+
+    # Save previous model for restore prompt
+    if loaded:
+        first_name = loaded[0].get("name", "")
+        if first_name:
+            session_state["_prev_model"] = first_name
+
+    # Only unload LLM models if VRAM usage is above 30%
+    gpu = query_gpu_vram()
+    if gpu:
+        used_pct = (gpu["total_mb"] - gpu["free_mb"]) / gpu["total_mb"] * 100
+        if used_pct > 30:
+            console_obj.print(
+                f"[yellow]VRAM {used_pct:.0f}% used — freeing GPU for {service_name}...[/yellow]"
+            )
+            for m in loaded:
+                name = m.get("name", "")
+                if name:
+                    _unload_model(name, cfg)
+
+            # Poll VRAM free (up to 15s)
+            threshold = gpu["total_mb"] - 2000
+            for _ in range(8):
+                if _verify_vram_free(threshold):
+                    break
+                time.sleep(2)
+            _vram_transition_panel("GPU freed", console_obj)
+        else:
+            console_obj.print(f"[dim]VRAM {used_pct:.0f}% used — keeping LLM loaded.[/dim]")
+    else:
+        # No GPU monitoring -- unload anyway to be safe
+        console_obj.print(f"[yellow]Freeing GPU for {service_name}...[/yellow]")
+        for m in loaded:
+            name = m.get("name", "")
+            if name:
+                _unload_model(name, cfg)
+
+    # Start the target service via docker compose
+    try:
+        console_obj.print(
+            f"[dim]Starting {service_name} (may take a few minutes on first run)...[/dim]"
+        )
+        subprocess.run(
+            _compose_base(cfg) + ["up", "-d", service_name],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except KeyboardInterrupt:
+        console_obj.print(f"\n[yellow]{service_name} startup cancelled.[/yellow]")
+        return False
+    except Exception as e:
+        console_obj.print(f"[red]Failed to start {service_name}: {e}[/red]")
+        return True  # Proceed anyway -- service may already be running
+
+    # Poll health until ready (up to 180s — SD can take 90-120s on first run)
+    deadline = time.time() + 180
+    with console_obj.status(f"[dim]Waiting for {service_name} to start...[/dim]"):
+        while time.time() < deadline:
+            if _check_gpu_service_health(service_name):
+                console_obj.print(f"[green]{service_name} is ready.[/green]")
+                return True
+            time.sleep(3)
+
+    console_obj.print(f"[yellow]{service_name} may still be starting. Proceeding anyway.[/yellow]")
+    return True
+
+
+def _restore_after_gpu_service(
+    cfg: dict,
+    console_obj,
+    session_state: dict,
+) -> bool:
+    """
+    After GPU service completes, prompt user to reload previous Ollama model.
+    Returns True always (reload is optional).
+    """
+    prev_model = session_state.get("_prev_model")
+    if not prev_model:
+        return True
+
+    ans = (
+        console_obj.input(
+            f"[yellow]Generation complete. Reload [bold]{prev_model}[/bold]?" f" [y/N] [/yellow]"
+        )
+        .strip()
+        .lower()
+    )
+
+    if ans in ("y", "yes"):
+        warmup_ollama_model(prev_model, cfg)
+        _vram_transition_panel("Reloaded", console_obj)
+        session_state["model"] = prev_model
+
+    # Clear regardless of answer
+    session_state.pop("_prev_model", None)
+    return True
+
+
+# ── Image Generation Pipeline ─────────────────────────────────────────────────
+
+
+def _parse_crafted_prompt(response_text: str) -> tuple[str, str]:
+    """Parse LLM response into (positive_prompt, user_exclusions).
+
+    The LLM may output a second line prefixed with ``EXCLUDE:`` to indicate
+    elements the user wants removed. Everything before that line is the
+    positive prompt.
+    """
+    lines = response_text.strip().split("\n")
+    positive_lines: list[str] = []
+    user_exclusions = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.upper().startswith("EXCLUDE:"):
+            user_exclusions = stripped[len("EXCLUDE:") :].strip()
+        else:
+            positive_lines.append(stripped)
+    positive = "\n".join(positive_lines).strip()
+    return positive, user_exclusions
+
+
+def _craft_sd_prompt(user_request: str, cfg: dict) -> tuple[str, str]:
+    """Craft an SD-optimized prompt from the user's natural language.
+
+    Calls Ollama ``llama3.1:8b`` with :data:`SD_PROMPT_SYSTEM` as system
+    prompt.  Returns ``(positive_prompt, user_exclusions)``.  Falls back to
+    ``(user_request, "")`` on any error.
+    """
+    try:
+        messages = [
+            {"role": "system", "content": SD_PROMPT_SYSTEM},
+            {"role": "user", "content": user_request},
+        ]
+        r = requests.post(
+            f"{cfg['ollama_url']}/api/chat",
+            json={"model": "llama3.1:8b", "messages": messages, "stream": False},
+            timeout=60,
+        )
+        r.raise_for_status()
+        response_text = r.json()["message"]["content"]
+        return _parse_crafted_prompt(response_text)
+    except Exception:
+        return (user_request, "")
+
+
+def _detect_sd_model_type() -> str:
+    """Detect whether the loaded SD model is SDXL or SD1.5.
+
+    Queries AUTOMATIC1111's ``/sdapi/v1/options`` and matches the checkpoint
+    name for ``sdxl``, ``xl``, or ``pony`` (case-insensitive).  Falls back to
+    ``"sd15"`` on any error.
+    """
+    try:
+        r = requests.get(f"{SD_WEBUI_URL}/sdapi/v1/options", timeout=5)
+        if r.status_code == 200:
+            checkpoint = r.json().get("sd_model_checkpoint", "").lower()
+            if any(tag in checkpoint for tag in ("sdxl", "xl", "pony")):
+                return "sdxl"
+    except Exception:
+        pass
+    return "sd15"
+
+
+def _get_negative_prompts(model_type: str, user_exclusions: str = "") -> str:
+    """Return default negative prompts for the given *model_type*.
+
+    Appends *user_exclusions* (comma-separated) if non-empty.
+    """
+    base = SDXL_NEGATIVES if model_type == "sdxl" else SD15_NEGATIVES
+    if user_exclusions:
+        return f"{base}, {user_exclusions}"
+    return base
+
+
+def _save_generation_output(data: bytes, ext: str, output_dir: str) -> str:
+    """Save generation output bytes and return the file path.
+
+    Naming convention: ``clod_{YYYYMMDD}_{HHMMSS}_{hash4}.{ext}``
+    Creates *output_dir* if it does not exist.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_hash = hashlib.md5(data[:256], usedforsecurity=False).hexdigest()[:4]
+    filename = f"clod_{ts}_{short_hash}.{ext}"
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, "wb") as f:
+        f.write(data)
+    return filepath
+
+
+def _generate_image(
+    prompt: str,
+    negative: str,
+    params: dict,
+    cfg: dict,
+    console_obj,
+) -> str | None:
+    """Generate an image via AUTOMATIC1111's txt2img API with Rich progress.
+
+    Submits the generation request in a background thread while the main
+    thread polls ``/sdapi/v1/progress`` to update a Rich progress bar.
+    Returns the saved file path, or ``None`` on error.
+    """
+    payload = {
+        "prompt": prompt,
+        "negative_prompt": negative,
+        "steps": params.get("steps", 25),
+        "cfg_scale": params.get("cfg_scale", 7),
+        "width": params.get("width", 512),
+        "height": params.get("height", 512),
+        "sampler_name": params.get("sampler_name", "DPM++ 2M"),
+        "save_images": False,
+    }
+
+    result_holder: dict = {"response": None, "error": None}
+
+    def _do_generate() -> None:
+        try:
+            r = requests.post(
+                f"{SD_WEBUI_URL}/sdapi/v1/txt2img",
+                json=payload,
+                timeout=300,
+            )
+            r.raise_for_status()
+            result_holder["response"] = r.json()
+        except Exception as e:
+            result_holder["error"] = str(e)
+
+    thread = threading.Thread(target=_do_generate)
+    thread.start()
+
+    # Poll progress with Rich Progress bar
+    with Progress(
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        console=console_obj,
+    ) as progress:
+        task = progress.add_task("Generating...", total=100)
+        while thread.is_alive():
+            try:
+                pr = requests.get(
+                    f"{SD_WEBUI_URL}/sdapi/v1/progress?skip_current_image=true",
+                    timeout=5,
+                )
+                pdata = pr.json()
+                pct = pdata.get("progress", 0) * 100
+                progress.update(task, completed=pct)
+            except Exception:
+                pass
+            time.sleep(1.5)
+        progress.update(task, completed=100)
+
+    thread.join()
+
+    if result_holder["error"] or not result_holder["response"]:
+        console_obj.print(f"[red]Generation failed: {result_holder.get('error', 'unknown')}[/red]")
+        return None
+
+    images = result_holder["response"].get("images", [])
+    if not images:
+        return None
+
+    # Decode base64 image (handle optional data URI prefix)
+    img_b64 = images[0].split(",", 1)[-1]
+    img_data = base64.b64decode(img_b64)
+
+    output_dir = cfg.get("sd_output_dir", ".")
+    return _save_generation_output(img_data, "png", output_dir)
+
+
+# ── Video Generation & Docker Orchestration ──────────────────────────────────
+
+
+def _craft_video_prompt(user_request: str, cfg: dict) -> str:
+    """Craft a ComfyUI-optimized video prompt from user's natural language.
+
+    Uses llama3.1:8b with :data:`VIDEO_PROMPT_SYSTEM`. Returns the optimized
+    prompt string, or falls back to the original *user_request* on error.
+    """
+    try:
+        messages = [
+            {"role": "system", "content": VIDEO_PROMPT_SYSTEM},
+            {"role": "user", "content": user_request},
+        ]
+        r = requests.post(
+            f"{cfg['ollama_url']}/api/chat",
+            json={"model": "llama3.1:8b", "messages": messages, "stream": False},
+            timeout=60,
+        )
+        r.raise_for_status()
+        return r.json()["message"]["content"].strip()
+    except Exception:
+        return user_request
+
+
+def _build_video_workflow(prompt: str) -> dict:
+    """Construct a basic ComfyUI workflow JSON for text-to-video.
+
+    Returns a parameterized workflow dict with *prompt* injected into the
+    positive prompt node. NOTE: The workflow should be customized per installed
+    video model (e.g., CogVideoX, LTX-Video, AnimateDiff).
+    """
+    return {
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "seed": 42,
+                "steps": 20,
+                "cfg": 7.0,
+                "sampler_name": "euler",
+                "scheduler": "normal",
+                "denoise": 1.0,
+                "model": ["4", 0],
+                "positive": ["6", 0],
+                "negative": ["7", 0],
+                "latent_image": ["5", 0],
+            },
+        },
+        "4": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": "video_model.safetensors"},
+        },
+        "5": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": 512, "height": 512, "batch_size": 16},
+        },
+        "6": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": prompt, "clip": ["4", 1]},
+        },
+        "7": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": "low quality, blurry, distorted",
+                "clip": ["4", 1],
+            },
+        },
+        "8": {
+            "class_type": "VHS_VideoCombine",
+            "inputs": {
+                "images": ["3", 0],
+                "frame_rate": 8,
+                "format": "video/h264-mp4",
+            },
+        },
+    }
+
+
+def _download_comfyui_output(item: dict, cfg: dict, console_obj) -> "str | None":
+    """Download a file from the ComfyUI ``/view`` endpoint.
+
+    *item* has keys: ``filename``, ``subfolder``, ``type``.
+    Saves to ``comfyui_output_dir`` with ``clod_{timestamp}_{hash}.{ext}`` naming.
+    Returns the saved filepath or ``None`` on error.
+    """
+    try:
+        params = urllib.parse.urlencode(
+            {
+                "filename": item["filename"],
+                "subfolder": item.get("subfolder", ""),
+                "type": item.get("type", "output"),
+            }
+        )
+        r = requests.get(f"{COMFYUI_URL}/view?{params}", timeout=30)
+        r.raise_for_status()
+        data = r.content
+
+        ext = os.path.splitext(item["filename"])[1] or ".mp4"
+        output_dir = cfg.get("comfyui_output_dir", ".")
+        return _save_generation_output(data, ext.lstrip("."), output_dir)
+    except Exception:
+        return None
+
+
+def _generate_video(prompt: str, cfg: dict, console_obj) -> "str | None":
+    """Generate video via ComfyUI API.
+
+    POSTs workflow to ``COMFYUI_URL/prompt``, then polls
+    ``/history/{prompt_id}`` every 3 seconds with a status spinner.
+    10-minute timeout.  Returns saved file path or ``None`` on failure.
+    """
+    workflow = _build_video_workflow(prompt)
+
+    try:
+        r = requests.post(
+            f"{COMFYUI_URL}/prompt",
+            json={"prompt": workflow},
+            timeout=30,
+        )
+        r.raise_for_status()
+        prompt_id = r.json()["prompt_id"]
+    except Exception as e:
+        console_obj.print(f"[red]Failed to queue video generation: {e}[/red]")
+        return None
+
+    # Poll /history/{prompt_id} until complete
+    with console_obj.status("[cyan]Generating video...[/cyan]"):
+        deadline = time.time() + 600  # 10-minute timeout
+        while time.time() < deadline:
+            try:
+                r = requests.get(
+                    f"{COMFYUI_URL}/history/{prompt_id}",
+                    timeout=5,
+                )
+                history = r.json()
+                if prompt_id in history:
+                    outputs = history[prompt_id].get("outputs", {})
+                    for _node_id, node_output in outputs.items():
+                        if "gifs" in node_output or "images" in node_output:
+                            items = node_output.get("gifs") or node_output.get("images", [])
+                            if items:
+                                return _download_comfyui_output(items[0], cfg, console_obj)
+            except Exception:
+                pass
+            time.sleep(3)
+
+    console_obj.print("[red]Video generation timed out.[/red]")
+    return None
+
+
+def _ensure_generation_service(intent: str, cfg: dict, console_obj, session_state: dict) -> bool:
+    """Ensure the correct generation service is running for the given intent.
+
+    For ``image_gen``: checks AUTOMATIC1111 via :func:`query_comfyui_running`.
+    If not running, starts it via :func:`_prepare_for_gpu_service`.
+
+    For ``video_gen``: checks ComfyUI via :func:`query_video_running`.  If not
+    running but the image profile is active, warns and confirms before switching
+    profiles.  GPU release verification is handled internally by
+    :func:`_prepare_for_gpu_service`.
+    """
+    if intent == "image_gen":
+        if query_comfyui_running():
+            return True
+        return _prepare_for_gpu_service("stable-diffusion", cfg, console_obj, session_state)
+
+    # video_gen
+    if query_video_running():
+        return True
+
+    if query_comfyui_running():
+        # Image profile running but we need video -- confirm switch
+        console_obj.print(
+            "[yellow]Switching from image to video mode. "
+            "This will stop AUTOMATIC1111 and start ComfyUI.[/yellow]"
+        )
+        ans = console_obj.input("[yellow]Continue? [y/N] [/yellow]").strip().lower()
+        if ans not in ("y", "yes"):
+            return False
+        sd_switch_mode("video", cfg)
+
+    return _prepare_for_gpu_service("comfyui", cfg, console_obj, session_state)
+
+
+def _silent_restore_model(cfg: dict, console_obj, session_state: dict) -> None:
+    """Auto-reload the previous Ollama model without user confirmation.
+
+    Unlike :func:`_restore_after_gpu_service` (which prompts y/N), this
+    silently reloads ``_prev_model``.  Does nothing if no previous model is
+    recorded.  Does **not** modify existing ``_restore_after_gpu_service``
+    (per Pitfall 7).
+    """
+    prev_model = session_state.get("_prev_model")
+    if not prev_model:
+        return
+
+    warmup_ollama_model(prev_model, cfg)
+    session_state["model"] = prev_model
+    session_state.pop("_prev_model", None)
+
+
+def _handle_generation_intent(
+    intent: str,
+    user_input: str,
+    session_state: dict,
+    console_obj,
+    cfg: dict,
+) -> None:
+    """Orchestrate the full generation lifecycle.
+
+    Sequence: save model -> load llama3.1:8b -> craft prompt -> unload ->
+    start service -> generate -> auto-open -> restore model.
+    """
+    # a. Save current model
+    prev_model = session_state.get("model", "")
+    session_state["_prev_model"] = prev_model
+
+    try:
+        # b. Load llama3.1:8b for prompt crafting
+        _ensure_model_ready("llama3.1:8b", cfg, console_obj, session_state, confirm=False)
+
+        # c. Craft prompt
+        exclusions = ""
+        try:
+            if intent == "image_gen":
+                prompt, exclusions = _craft_sd_prompt(user_input, cfg)
+            else:
+                prompt = _craft_video_prompt(user_input, cfg)
+        except Exception:
+            # Graceful fallback to raw user input
+            prompt = user_input
+            exclusions = ""
+
+        # d. Show crafted prompt
+        console_obj.print(f"[cyan]Prompt: {prompt}[/cyan]")
+
+        # e. Unload llama3.1:8b
+        _unload_model("llama3.1:8b", cfg)
+
+        # f. Ensure generation service is running
+        ok = _ensure_generation_service(intent, cfg, console_obj, session_state)
+        if not ok:
+            console_obj.print("[yellow]Generation service not available. Aborting.[/yellow]")
+            return
+
+        # g. Generate
+        filepath = None
+        if intent == "image_gen":
+            model_type = _detect_sd_model_type()
+            negative = _get_negative_prompts(model_type, exclusions)
+            params = SDXL_DEFAULT_PARAMS if model_type == "sdxl" else SD_DEFAULT_PARAMS
+            filepath = _generate_image(prompt, negative, params, cfg, console_obj)
+        else:
+            filepath = _generate_video(prompt, cfg, console_obj)
+
+        # h/i. Handle result
+        if filepath:
+            console_obj.print(f"[green]Saved: {filepath}[/green]")
+            if hasattr(os, "startfile"):
+                os.startfile(filepath)
+        else:
+            console_obj.print("[red]Generation failed. No output produced.[/red]")
+    finally:
+        # j. Always restore model
+        _silent_restore_model(cfg, console_obj, session_state)
 
 
 def query_system_info() -> dict:
@@ -853,7 +1651,30 @@ def _compute_features(env_vars: dict, health: dict) -> dict[str, bool]:
         # Offline by default unless an Anthropic key is configured.
         # Ollama always runs locally; offline mode only gates Claude/cloud calls.
         "offline_default": not has_anthropic_key,
+        # User-toggleable web search flag (independent of SearXNG health).
+        # Defaults to True; toggled via /search command.
+        "web_search_enabled": True,
     }
+
+
+# ── Offline Gating ──────────────────────────────────────────────────────────
+
+
+def _is_cloud_request(model: str) -> bool:
+    """Return True if *model* targets a cloud provider (Claude, GPT, etc.)."""
+    return any(model.startswith(p) for p in CLOUD_MODEL_PREFIXES)
+
+
+def _enforce_offline(model: str, session_state: dict) -> Optional[str]:
+    """Return an error message if *model* is blocked by offline mode, else None."""
+    if not session_state.get("offline", False):
+        return None
+    if _is_cloud_request(model):
+        return (
+            f"Cloud model '{model}' blocked -- offline mode active. "
+            "Use /offline off to re-enable."
+        )
+    return None
 
 
 def _compose_base(cfg: dict) -> list[str]:
@@ -896,17 +1717,23 @@ def _offer_docker_startup(cfg: dict, missing: list, console_obj: Console) -> boo
         return False
 
     try:
+        console_obj.print(
+            "[dim]Running docker compose up -d (this may take a few minutes on first run)…[/dim]"
+        )
         r = subprocess.run(
             _compose_base(cfg) + ["up", "-d"],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
         if r.returncode != 0:
             console_obj.print(f"[red]docker compose up failed:\n{r.stderr.strip()}[/red]")
             return False
     except FileNotFoundError:
         console_obj.print("[red]docker CLI not found. Install Docker Desktop and try again.[/red]")
+        return False
+    except KeyboardInterrupt:
+        console_obj.print("\n[yellow]Docker startup cancelled.[/yellow]")
         return False
     except Exception as e:
         console_obj.print(f"[red]Failed to start services: {e}[/red]")
@@ -1879,15 +2706,17 @@ def print_header(
     tools_on: bool,
     budget: Optional[TokenBudget] = None,
     offline: bool = False,
+    web_search: bool = True,
 ) -> None:
     active = f"pipeline:{pipeline}" if pipeline else model
     tools_str = "[green]on[/green]" if tools_on else "[dim]off[/dim]"
     mode_str = "[bold red]OFFLINE[/bold red]" if offline else "[dim]online[/dim]"
+    search_str = "[green]search: on[/green]" if web_search else "[dim]search: off[/dim]"
     tok_str = f"  •  tokens: {budget.status_str()}" if budget and budget.used > 0 else ""
     console.print(
         Panel(
             f"[bold cyan]clod[/bold cyan] [dim]v{__version__}[/dim]  •  "
-            f"[bold]{active}[/bold]  •  tools: {tools_str}  •  {mode_str}{tok_str}\n"
+            f"[bold]{active}[/bold]  •  tools: {tools_str}  •  {mode_str}  •  {search_str}{tok_str}\n"
             f"[dim]Type [bold]/help[/bold] for commands, [bold]Ctrl+D[/bold] to exit[/dim]",
             border_style="cyan",
             expand=False,
@@ -1909,6 +2738,7 @@ def print_help() -> None:
                     "  [yellow]/pipeline [/yellow][dim]<name|off>[/dim]   use a two-stage pipeline",
                     "  [yellow]/tools [/yellow][dim][on|off][/dim]         toggle tool use",
                     "  [yellow]/offline [/yellow][dim][on|off][/dim]       toggle offline mode (local only)",
+                    "  [yellow]/search [/yellow][dim][on|off][/dim]        toggle web search (SearXNG)",
                     "  [yellow]/tokens[/yellow]                  show session Claude token usage",
                     "  [yellow]/system [/yellow][dim]<prompt>[/dim]        set system prompt",
                     "  [yellow]/clear[/yellow]                   clear conversation history",
@@ -1916,8 +2746,13 @@ def print_help() -> None:
                     "  [yellow]/index [/yellow][dim][path][/dim]           index projects: generate CLAUDE.md + README",
                     "  [yellow]/gpu[/yellow]                     show GPU VRAM + optimal model recommendation",
                     "  [yellow]/mcp[/yellow]                     show MCP filesystem server status and endpoints",
+                    "  [yellow]/generate [/yellow][dim][image|video] <prompt>[/dim]  generate image or video from description",
                     "  [yellow]/sd [/yellow][dim][image|video|stop|start][/dim]  switch image/video mode or stop/start SD",
                     "  [yellow]/services[/yellow]               show docker service health status",
+                    "  [yellow]/intent[/yellow]                  show current intent classification state",
+                    "  [yellow]/intent auto[/yellow]             re-enable auto-classification",
+                    "  [yellow]/intent verbose[/yellow]          toggle verbose intent debug output",
+                    "  [yellow]/intent [/yellow][dim]<text>[/dim]          one-shot classify text",
                     "  [yellow]/services start[/yellow]         start missing core services via docker compose",
                     "  [yellow]/services stop[/yellow]          stop all core services (docker compose down)",
                     "  [yellow]/services reset [/yellow][dim][name|all][/dim]  wipe data and redeploy service(s)",
@@ -2005,9 +2840,10 @@ def infer(
     # Offline: strip pipeline and redirect cloud models to local default
     if offline:
         pipeline = None
-        if any(model.startswith(p) for p in CLOUD_MODEL_PREFIXES):
+        block_msg = _enforce_offline(model, session_state or {"offline": True})
+        if block_msg:
             model = cfg["default_model"]
-            console.print(f"[dim][offline] using local model: {model}[/dim]")
+            console.print(f"[dim][offline] {block_msg} Using local model: {model}[/dim]")
 
     features = session_state.get("features") if session_state else None
     adapter = pick_adapter(model, pipeline, cfg, features)
@@ -2060,7 +2896,7 @@ def infer(
         # Execute each tool, add results
         for tc in tool_calls:
             print_tool_call(tc["name"], tc["arguments"])
-            result = execute_tool(tc["name"], tc["arguments"], console, cfg)
+            result = execute_tool(tc["name"], tc["arguments"], console, cfg, features=features)
             print_tool_result(tc["name"], result)
             messages.append(
                 {
@@ -2102,11 +2938,27 @@ def handle_slash(
 
     elif verb == "/model":
         if arg:
-            session_state["model"] = arg
-            session_state["pipeline"] = None
-            console.print(f"[dim]Model → [bold]{arg}[/bold][/dim]")
-            if not any(arg.startswith(p) for p in CLOUD_MODEL_PREFIXES):
-                warmup_ollama_model(arg, session_state["cfg"])
+            if any(arg.startswith(p) for p in CLOUD_MODEL_PREFIXES):
+                session_state["model"] = arg
+                session_state["pipeline"] = None
+                session_state["intent_enabled"] = False
+                console.print(f"[dim]Model → [bold]{arg}[/bold][/dim]")
+                console.print(
+                    "[dim]Intent auto-classification disabled. Use /intent auto to re-enable.[/dim]"
+                )
+            else:
+                ok = _ensure_model_ready(
+                    arg, session_state["cfg"], console, session_state, confirm=True
+                )
+                if ok:
+                    session_state["pipeline"] = None
+                    session_state["intent_enabled"] = False
+                    console.print(f"[dim]Model → [bold]{arg}[/bold][/dim]")
+                    console.print(
+                        "[dim]Intent auto-classification disabled. Use /intent auto to re-enable.[/dim]"
+                    )
+                else:
+                    console.print("[dim]Model switch cancelled.[/dim]")
         else:
             console.print(f"[dim]Current model: [bold]{session_state['model']}[/bold][/dim]")
 
@@ -2169,6 +3021,27 @@ def handle_slash(
         else:
             session_state["offline"] = True
             console.print("[dim]Offline mode [red]enabled[/red] — local model only.[/dim]")
+        ws = session_state.get("features", {}).get("web_search_enabled", True)
+        console.print(
+            f"[dim]Offline: {'ON' if session_state['offline'] else 'OFF'} | "
+            f"Web search: {'ON' if ws else 'OFF'}[/dim]"
+        )
+
+    elif verb == "/search":
+        features = session_state.get("features", {})
+        if arg.lower() in ("off", "false", "0"):
+            features["web_search_enabled"] = False
+            console.print("[dim]Web search [red]disabled[/red][/dim]")
+        elif arg.lower() in ("on", "true", "1"):
+            features["web_search_enabled"] = True
+            console.print("[dim]Web search [green]enabled[/green][/dim]")
+        else:
+            # Toggle
+            current = features.get("web_search_enabled", True)
+            features["web_search_enabled"] = not current
+            state = "[green]enabled[/green]" if not current else "[red]disabled[/red]"
+            console.print(f"[dim]Web search {state}[/dim]")
+        session_state["features"] = features
 
     elif verb == "/tokens":
         budget: TokenBudget = session_state["budget"]
@@ -2235,10 +3108,12 @@ def handle_slash(
                 )
             )
             if arg.lower() == "use" and rec:
-                session_state["model"] = rec
-                session_state["pipeline"] = None
-                console.print(f"[dim]Model → [bold]{rec}[/bold][/dim]")
-                warmup_ollama_model(rec, session_state["cfg"])
+                ok = _ensure_model_ready(
+                    rec, session_state["cfg"], console, session_state, confirm=False
+                )
+                if ok:
+                    session_state["pipeline"] = None
+                    console.print(f"[dim]Model → [bold]{rec}[/bold][/dim]")
 
     elif verb == "/sd":
         sub = arg.lower().strip()
@@ -2258,6 +3133,21 @@ def handle_slash(
                     f"[dim]Switching to [bold]{sub}[/bold] mode → {svc}  "
                     f"(stopping {current}, restarting Open-WebUI…)[/dim]"
                 )
+                # Free VRAM before SD/ComfyUI
+                loaded = _get_loaded_models(session_state["cfg"])
+                if loaded:
+                    session_state["_prev_model"] = loaded[0].get("name", "")
+                    for m in loaded:
+                        name = m.get("name", "")
+                        if name:
+                            _unload_model(name, session_state["cfg"])
+                    _vram_transition_panel("GPU freed", console)
+                # Verify VRAM is actually free via nvidia-smi
+                if not _verify_vram_free():
+                    console.print(
+                        "[yellow]Warning: VRAM may not be fully freed. "
+                        "SD/ComfyUI may encounter memory issues.[/yellow]"
+                    )
                 ok, msg = sd_switch_mode(sub, session_state["cfg"])
                 if ok:
                     session_state["sd_mode"] = sub
@@ -2307,6 +3197,7 @@ def handle_slash(
                             f"[dim]GPU free: [bold]{gpu['free_mb']:,} MiB[/bold]  •  "
                             f"Recommended LLM: [bold cyan]{rec or 'none'}[/bold cyan][/dim]"
                         )
+                    _restore_after_gpu_service(session_state["cfg"], console, session_state)
                 else:
                     console.print(f"[red]Stop errors: {msg} {msg2}[/red]")
 
@@ -2314,6 +3205,21 @@ def handle_slash(
             # ── Restart last-active mode ──────────────────────────────────
             mode = session_state.get("sd_mode", session_state["cfg"].get("sd_mode", "image"))
             console.print(f"[dim]Starting [bold]{mode}[/bold] mode…[/dim]")
+            # Free VRAM before SD/ComfyUI
+            loaded = _get_loaded_models(session_state["cfg"])
+            if loaded:
+                session_state["_prev_model"] = loaded[0].get("name", "")
+                for m in loaded:
+                    name = m.get("name", "")
+                    if name:
+                        _unload_model(name, session_state["cfg"])
+                _vram_transition_panel("GPU freed", console)
+            # Verify VRAM is actually free via nvidia-smi
+            if not _verify_vram_free():
+                console.print(
+                    "[yellow]Warning: VRAM may not be fully freed. "
+                    "SD/ComfyUI may encounter memory issues.[/yellow]"
+                )
             ok, msg = sd_switch_mode(mode, session_state["cfg"])
             if ok:
                 console.print(f"[green]SD started in [bold]{mode}[/bold] mode.[/green]")
@@ -2528,6 +3434,63 @@ def handle_slash(
                 )
             )
 
+    elif verb == "/intent":
+        if not HAS_INTENT:
+            console.print("[red]Intent classification module not available (import failed).[/red]")
+        elif arg.lower() == "auto":
+            session_state["intent_enabled"] = True
+            console.print("[dim]Intent auto-classification [green]enabled[/green].[/dim]")
+        elif arg.lower() == "verbose":
+            session_state["intent_verbose"] = not session_state.get("intent_verbose", False)
+            state = "enabled" if session_state["intent_verbose"] else "disabled"
+            color = "green" if session_state["intent_verbose"] else "red"
+            console.print(f"[dim]Intent verbose [{color}]{state}[/{color}].[/dim]")
+        elif arg:
+            # One-shot classification
+            intent, confidence = classify_intent(arg)
+            console.print(
+                Panel(
+                    f"[bold]{intent}[/bold]  confidence: {confidence:.2f}",
+                    title="[cyan]intent classification[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                )
+            )
+        else:
+            # Status
+            auto_state = (
+                "[green]on[/green]" if session_state.get("intent_enabled") else "[red]off[/red]"
+            )
+            verbose_state = (
+                "[green]on[/green]" if session_state.get("intent_verbose") else "[red]off[/red]"
+            )
+            last = session_state.get("last_intent") or "none"
+            conf = session_state.get("last_confidence", 0.0)
+            console.print(
+                Panel(
+                    f"Auto-classify: {auto_state}\n"
+                    f"Verbose:       {verbose_state}\n"
+                    f"Last intent:   [bold]{last}[/bold]  ({conf:.2f})",
+                    title="[cyan]intent state[/cyan]",
+                    border_style="cyan",
+                    expand=False,
+                )
+            )
+
+    elif verb == "/generate":
+        gen_parts = cmd.split(None, 2)
+        if len(gen_parts) < 3:
+            console.print("[yellow]Usage: /generate image|video <prompt>[/yellow]")
+        elif gen_parts[1].lower() not in ("image", "video"):
+            console.print("[red]Unknown type. Use 'image' or 'video'.[/red]")
+        else:
+            gen_type = gen_parts[1].lower()
+            prompt_text = gen_parts[2]
+            gen_intent = "image_gen" if gen_type == "image" else "video_gen"
+            _handle_generation_intent(
+                gen_intent, prompt_text, session_state, console, session_state["cfg"]
+            )
+
     else:
         return False
 
@@ -2562,13 +3525,24 @@ def run_repl(
         "mcp_dir": None,
         "features": features or {},
         "health": health or {},
+        "intent_enabled": True,
+        "last_intent": None,
+        "last_confidence": 0.0,
+        "intent_verbose": False,
     }
 
     messages: list = []
     if system:
         messages.append({"role": "system", "content": system})
 
-    print_header(model, pipeline, tools_on, budget, offline=offline_default)
+    print_header(
+        model,
+        pipeline,
+        tools_on,
+        budget,
+        offline=offline_default,
+        web_search=(features or {}).get("web_search_enabled", True),
+    )
 
     # MCP filesystem server — prompt before PromptSession init so that
     # prompt_toolkit's win32 console-mode changes don't break console.input().
@@ -2624,6 +3598,28 @@ def run_repl(
             continue
 
         messages.append({"role": "user", "content": user_input})
+
+        # -- Intent Classification + Smart Model Routing ---
+        if HAS_INTENT and session_state["intent_enabled"]:
+            intent, confidence = classify_intent(user_input)
+            session_state["last_intent"] = intent
+            session_state["last_confidence"] = confidence
+            if session_state.get("intent_verbose"):
+                console.print(f"[dim]Intent: {intent} ({confidence:.2f})[/dim]")
+            if confidence < 0.8:
+                console.print(
+                    f"[dim]Low confidence intent: [bold]{intent}[/bold] ({confidence:.2f})"
+                    " -- proceeding as chat[/dim]"
+                )
+            else:
+                # Generation intent interception (Phase 4)
+                target = INTENT_MODEL_MAP.get(intent)
+                if target is None and intent in ("image_gen", "video_gen"):
+                    _handle_generation_intent(intent, user_input, session_state, console, cfg)
+                    continue  # skip normal infer() flow
+                # Smart Model Routing (Phase 3)
+                _route_to_model(intent, confidence, session_state, console)
+
         reply = infer(
             messages,
             session_state["model"],

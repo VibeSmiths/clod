@@ -1,5 +1,5 @@
 """
-Integration-specific pytest fixtures: mock HTTP servers for Ollama and LiteLLM.
+Integration-specific pytest fixtures: mock HTTP server for Ollama.
 """
 
 import sys
@@ -101,43 +101,3 @@ def mock_ollama_server():
     httpd, base_url = _start_server(handler)
     yield base_url
     httpd.shutdown()
-
-
-# ── LiteLLM mock ──────────────────────────────────────────────────────────────
-
-_LITELLM_SSE = (
-    'data: {"choices": [{"delta": {"content": "test"}, "finish_reason": null}]}\n\n'
-    "data: [DONE]\n\n"
-)
-
-_LITELLM_ROUTES = {
-    ("POST", "/v1/chat/completions"): (200, "text/event-stream", _LITELLM_SSE),
-}
-
-
-@pytest.fixture(scope="session")
-def mock_litellm_server():
-    """Start a minimal LiteLLM-compatible HTTP server. Yields the base URL."""
-    handler = _make_handler(_LITELLM_ROUTES)
-    httpd, base_url = _start_server(handler)
-    yield base_url
-    httpd.shutdown()
-
-
-# ── Combined config fixture ────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def integration_cfg(mock_ollama_server, mock_litellm_server):
-    """Config dict pointing at both mock servers."""
-    return {
-        "ollama_url": mock_ollama_server,
-        "litellm_url": mock_litellm_server,
-        "litellm_key": "sk-test",
-        "pipelines_url": mock_litellm_server,  # reuse litellm mock for pipelines
-        "searxng_url": "http://127.0.0.1:1",  # unused in inference tests
-        "default_model": "qwen2.5-coder:14b",
-        "pipeline": None,
-        "enable_tools": False,
-        "token_budget": 10000,
-    }

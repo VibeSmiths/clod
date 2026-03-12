@@ -29,13 +29,23 @@ config_datas = [
     ('.env.example',                    '.'),
 ]
 
+# Intent classification model files (Phase 2)
+intent_model_datas = [
+    ('models/intent/model_quint8_avx2.onnx', 'models/intent'),
+    ('models/intent/tokenizer.json', 'models/intent'),
+    ('models/intent/route_embeddings.npz', 'models/intent'),
+]
+
 a = Analysis(
     ['clod.py'],
     pathex=[],
     binaries=[],
-    datas=unicode_data_files + config_datas,
+    datas=unicode_data_files + config_datas + intent_model_datas,
     hiddenimports=[
         "mcp_server",
+        "intent",
+        "onnxruntime",
+        "tokenizers",
         "rich",
         "rich._unicode_data",
         "rich._unicode_data._versions",

@@ -227,9 +227,13 @@ services:
         max-size: "5m"
         max-file: "2"
     volumes:
-      - sd_ckpt_models:/data/models/Stable-diffusion:rw
-      - sd_lora_models:/data/models/Lora:rw
-      - sd_output:/outputs:rw
+      - shared_checkpoints:/data/models/Stable-diffusion:rw
+      - shared_loras:/data/models/Lora:rw
+      - shared_vae:/data/models/VAE:rw
+      - shared_embeddings:/data/models/embeddings:rw
+      - shared_upscalers:/data/models/ESRGAN:rw
+      - shared_controlnet:/data/models/ControlNet:rw
+      - shared_output:/outputs:rw
     deploy:
       resources:
         reservations:
@@ -256,7 +260,13 @@ services:
         max-file: "2"
     volumes:
       - comfyui_models:/root/ComfyUI/models:rw
-      - comfyui_output:/root/ComfyUI/output:rw
+      - shared_checkpoints:/root/ComfyUI/models/checkpoints:rw
+      - shared_loras:/root/ComfyUI/models/loras:rw
+      - shared_vae:/root/ComfyUI/models/vae:rw
+      - shared_embeddings:/root/ComfyUI/models/embeddings:rw
+      - shared_upscalers:/root/ComfyUI/models/upscale_models:rw
+      - shared_controlnet:/root/ComfyUI/models/controlnet:rw
+      - shared_output:/root/ComfyUI/output:rw
       - comfyui_custom_nodes:/root/ComfyUI/custom_nodes:rw
     deploy:
       resources:
@@ -369,24 +379,48 @@ volumes:
       type: none
       o: bind
       device: "${OWUI_DATA_DIR}"
-  sd_ckpt_models:
+  shared_checkpoints:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: "${SD_CKPT_MODELS_DIR}"
-  sd_lora_models:
+      device: "${SHARED_CHECKPOINTS_DIR}"
+  shared_loras:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: "${SD_LORA_MODELS_DIR}"
-  sd_output:
+      device: "${SHARED_LORAS_DIR}"
+  shared_vae:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: "${SD_OUTPUT_DIR}"
+      device: "${SHARED_VAE_DIR}"
+  shared_embeddings:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${SHARED_EMBEDDINGS_DIR}"
+  shared_upscalers:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${SHARED_UPSCALERS_DIR}"
+  shared_controlnet:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${SHARED_CONTROLNET_DIR}"
+  shared_output:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${SHARED_OUTPUT_DIR}"
   voices:
     driver: local
     driver_opts:
@@ -405,12 +439,6 @@ volumes:
       type: none
       o: bind
       device: "${COMFYUI_MODELS_DIR}"
-  comfyui_output:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: "${COMFYUI_OUTPUT_DIR}"
   comfyui_custom_nodes:
     driver: local
     driver_opts:

@@ -119,6 +119,18 @@ def test_compute_features_all_down():
     assert feats["offline_default"] is True
 
 
+def test_compute_features_includes_web_search_enabled():
+    feats = clod._compute_features(_ENV_WITH_KEY, _all_up())
+    assert "web_search_enabled" in feats
+    assert feats["web_search_enabled"] is True
+
+
+def test_compute_features_web_search_enabled_default_true():
+    """web_search_enabled defaults to True regardless of service health."""
+    feats = clod._compute_features({}, _all_down())
+    assert feats["web_search_enabled"] is True
+
+
 # ── _check_service_health ──────────────────────────────────────────────────────
 
 
