@@ -107,7 +107,7 @@ jobs:
           echo "## Unit Test Coverage" >> $GITHUB_STEP_SUMMARY
           python -m coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
 
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         with:
           file: ./coverage.xml
           flags: unit
