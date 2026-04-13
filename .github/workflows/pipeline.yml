@@ -287,7 +287,7 @@ jobs:
           ls -lah release-files/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: "v${{ needs.versioner.outputs.version }}"
           name: "clod v${{ needs.versioner.outputs.version }}"
