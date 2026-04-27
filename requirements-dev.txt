@@ -3,4 +3,4 @@ pytest-cov>=4.1
 coverage[toml]>=7.2
 responses>=0.24
 bandit[toml]>=1.7
-pip-audit>=2.6
+pip-audit>=2.10.0
